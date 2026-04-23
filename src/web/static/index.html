@@ -1207,7 +1207,7 @@ async function renderTrend(box, pk) {
           return `<button data-h="${h}" class="${h===hours?'active':''}">${lbl}</button>`;
         }).join("")}
       </div>
-      <span style="font-size:12px;color:#64748b">左轴: 美元金额 · 右轴: 利用率 %</span>
+      <span style="font-size:12px;color:#64748b">左轴: 美元金额（堆叠: Borrow + Liquidity ≈ Supply）· 右轴: 利用率 %</span>
     </div>
     <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
   `;
@@ -1240,10 +1240,14 @@ async function renderTrend(box, pk) {
     data: {
       labels,
       datasets: [
-        { label: "Supply USD", data: supply, yAxisID: "y", borderColor: "#22d3ee", backgroundColor: "rgba(34,211,238,0.1)", borderWidth: 1.5, tension: 0.2, pointRadius: 0 },
-        { label: "Borrow USD", data: borrow, yAxisID: "y", borderColor: "#fb923c", backgroundColor: "rgba(251,146,60,0.1)", borderWidth: 1.5, tension: 0.2, pointRadius: 0 },
-        { label: "Liquidity USD", data: avail, yAxisID: "y", borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,0.1)", borderWidth: 1.5, tension: 0.2, pointRadius: 0 },
-        { label: "利用率 %", data: util, yAxisID: "y1", borderColor: "#facc15", borderWidth: 1.5, borderDash: [4,4], tension: 0.2, pointRadius: 0 }
+        { label: "Borrow USD", data: borrow, yAxisID: "y", stack: "assets", fill: "origin",
+          borderColor: "#fb923c", backgroundColor: "rgba(251,146,60,0.35)", borderWidth: 1.2, tension: 0.2, pointRadius: 0 },
+        { label: "Liquidity USD", data: avail, yAxisID: "y", stack: "assets", fill: "-1",
+          borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,0.45)", borderWidth: 1.2, tension: 0.2, pointRadius: 0 },
+        { label: "Supply USD (参考)", data: supply, yAxisID: "y", stack: "supply-ref", fill: false,
+          borderColor: "#22d3ee", borderWidth: 1, borderDash: [2,3], tension: 0.2, pointRadius: 0 },
+        { label: "利用率 %", data: util, yAxisID: "y1", fill: false,
+          borderColor: "#facc15", borderWidth: 1.5, borderDash: [4,4], tension: 0.2, pointRadius: 0 }
       ]
     },
     options: {
@@ -1269,7 +1273,8 @@ async function renderTrend(box, pk) {
           ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "#1e293b" }
         },
         y: {
-          position: "left", ticks: { color: "#64748b", callback: (v) => fmtUSD(v) }, grid: { color: "#1e293b" }
+          position: "left", stacked: true, beginAtZero: true,
+          ticks: { color: "#64748b", callback: (v) => fmtUSD(v) }, grid: { color: "#1e293b" }
         },
         y1: {
           position: "right", min: 0, max: 100,
@@ -1520,7 +1525,11 @@ async function renderPermissions(box, pk) {
    ========================================================= */
 async function renderAlerts(box, pk) {
   box.innerHTML = `<div id="alerts-body"><div class="loading">加载中…</div></div>`;
-  const r = await api(`/api/pools/${encodeURIComponent(pk)}/alerts?limit=50`);
+  // 并行拉告警 + 当前激活的屏蔽规则,合并展示
+  const [r, mutesResp] = await Promise.all([
+    api(`/api/pools/${encodeURIComponent(pk)}/alerts?limit=50`),
+    api("/api/mutes"),
+  ]);
   const body = document.getElementById("alerts-body");
   if (!r.ok) {
     body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
@@ -1531,6 +1540,39 @@ async function renderAlerts(box, pk) {
     body.innerHTML = `<div class="empty" style="color:#4ade80">✅ 无历史告警</div>`;
     return;
   }
+  const activeMutes = (mutesResp && mutesResp.ok && mutesResp.mutes) || [];
+  // 命中条件:同 pool 且 (rule 为空[=整池屏蔽] 或 rule 精确匹配)
+  const findMute = (rule) => activeMutes.find(m =>
+    m.pool_key === pk && (!m.rule || m.rule === rule)
+  );
+
+  const rowsHtml = alerts.map((a, i) => {
+    const mute = a.rule ? findMute(a.rule) : null;
+    let actionCell = `<button class="expand-btn" data-i="${i}">展开</button>`;
+    if (a.rule) {
+      if (mute) {
+        const isPoolWide = !mute.rule;
+        const tip = (mute.reason || "(无原因)") + " · 到期 " + (mute.human_until || "永久");
+        actionCell += ` <span style="margin-left:6px;padding:2px 6px;background:#065f46;color:#d1fae5;border:1px solid #10b981;border-radius:3px;font-size:11px" title="${tip}">✅ 已屏蔽${isPoolWide ? "(整池)" : ""} · ${mute.human_until || "永久"}</span>`;
+        actionCell += ` <button class="mute-undo-inline" data-rule="${mute.rule || ""}" data-pk="${pk}" style="margin-left:2px;padding:2px 8px;background:#7f1d1d;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">取消</button>`;
+      } else {
+        actionCell += ` <button class="mute-rule-inline" data-rule="${a.rule}" data-pk="${pk}" style="margin-left:6px;padding:2px 8px;background:#422006;color:#facc15;border:1px solid #713f12;border-radius:3px;cursor:pointer;font-size:11px" title="屏蔽这条规则 7 天">🔕 屏蔽 7d</button>`;
+      }
+    }
+    return `
+      <tr class="level-row-${a.level}">
+        <td title="${fmtAbsTime(a.ts)}">${fmtAbsTime(a.ts)}</td>
+        <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
+        <td class="mono" style="font-size:11px;color:#94a3b8">${a.rule || ""}</td>
+        <td>${a.message || ""}</td>
+        <td>${actionCell}</td>
+      </tr>
+      <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${
+        JSON.stringify(a.metrics || {}, null, 2)
+      }</td></tr>
+    `;
+  }).join("");
+
   body.innerHTML = `
     <table class="data-table alerts-table">
       <thead><tr>
@@ -1538,25 +1580,9 @@ async function renderAlerts(box, pk) {
         <th style="width:80px">级别</th>
         <th style="width:180px">规则</th>
         <th>消息</th>
-        <th style="width:200px">操作</th>
+        <th style="width:220px">操作</th>
       </tr></thead>
-      <tbody id="alerts-tbody">
-      ${alerts.map((a, i) => `
-        <tr class="level-row-${a.level}">
-          <td title="${fmtAbsTime(a.ts)}">${fmtAbsTime(a.ts)}</td>
-          <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
-          <td class="mono" style="font-size:11px;color:#94a3b8">${a.rule || ""}</td>
-          <td>${a.message || ""}</td>
-          <td>
-            <button class="expand-btn" data-i="${i}">展开</button>
-            ${a.rule ? `<button class="mute-rule-inline" data-rule="${a.rule}" data-pk="${pk}" style="margin-left:6px;padding:2px 8px;background:#422006;color:#facc15;border:1px solid #713f12;border-radius:3px;cursor:pointer;font-size:11px" title="屏蔽这条规则 7 天">🔕 屏蔽 7d</button>` : ""}
-          </td>
-        </tr>
-        <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${
-          JSON.stringify(a.metrics || {}, null, 2)
-        }</td></tr>
-      `).join("")}
-      </tbody>
+      <tbody id="alerts-tbody">${rowsHtml}</tbody>
     </table>
   `;
   document.querySelectorAll(".expand-btn").forEach(b => {
@@ -1574,18 +1600,31 @@ async function renderAlerts(box, pk) {
       const poolKey = b.dataset.pk;
       const reason = prompt(`屏蔽规则 ${rule} 7 天,原因?`, "UI 触发") || "UI 触发";
       b.disabled = true;
-      const orig = b.textContent;
       b.textContent = "处理中…";
       const resp = await apiAddMute(poolKey, rule, "7d", reason);
       if (resp.ok) {
-        b.textContent = "✅ 已屏蔽";
-        b.style.background = "#065f46";
-        b.style.color = "#d1fae5";
-        b.style.borderColor = "#10b981";
+        await renderAlerts(box, pk);  // 重渲染,所有同规则行都会切到"已屏蔽"状态
       } else {
         alert("屏蔽失败: " + (resp.error || resp.detail || "未知错误"));
         b.disabled = false;
-        b.textContent = orig;
+        b.textContent = "🔕 屏蔽 7d";
+      }
+    };
+  });
+  document.querySelectorAll(".mute-undo-inline").forEach(b => {
+    b.onclick = async () => {
+      const rule = b.dataset.rule || null;
+      const poolKey = b.dataset.pk;
+      if (!confirm(rule ? `取消屏蔽规则 ${rule}?` : "取消整个池子的屏蔽?")) return;
+      b.disabled = true;
+      b.textContent = "处理中…";
+      const resp = await apiRemoveMute(poolKey, rule);
+      if (resp.ok) {
+        await renderAlerts(box, pk);
+      } else {
+        alert("取消失败: " + (resp.error || resp.detail || "未知错误"));
+        b.disabled = false;
+        b.textContent = "取消";
       }
     };
   });
