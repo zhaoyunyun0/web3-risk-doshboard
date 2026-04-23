@@ -269,6 +269,52 @@ class SqliteSink:
             r["metrics"] = _parse_metrics(r.get("metrics"))
         return rows
 
+    def max_alert_id(self) -> int:
+        with self._lock, self._conn:
+            row = self._conn.execute("SELECT COALESCE(MAX(id), 0) FROM alerts").fetchone()
+        return int(row[0]) if row else 0
+
+    def alerts_after(self, after_id: int, limit: int = 100) -> list[dict]:
+        """Return alerts with id > after_id, ordered by id ASC (so caller
+        can advance its cursor to the last row's id)."""
+        sql = """
+            SELECT id, ts, level, rule, pool_key, chain, protocol, symbol,
+                   message, metrics
+            FROM alerts
+            WHERE id > ?
+            ORDER BY id ASC
+            LIMIT ?
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, (int(after_id), int(limit)))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r["metrics"] = _parse_metrics(r.get("metrics"))
+        return rows
+
+    def max_event_id(self) -> int:
+        with self._lock, self._conn:
+            row = self._conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
+        return int(row[0]) if row else 0
+
+    def events_after(self, after_id: int, limit: int = 100) -> list[dict]:
+        sql = """
+            SELECT id, ts, chain, contract, contract_role, event, level,
+                   block_number, tx_hash, log_index, old_value, new_value, extra
+            FROM events
+            WHERE id > ?
+            ORDER BY id ASC
+            LIMIT ?
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, (int(after_id), int(limit)))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r["extra"] = _parse_metrics(r.get("extra"))
+        return rows
+
     # --------- Track B: events & cursors ---------
     def write_events(self, rows: list[dict]) -> list[dict]:
         """Insert event rows (dedup via UNIQUE (chain, tx_hash, log_index)).

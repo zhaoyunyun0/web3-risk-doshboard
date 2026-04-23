@@ -70,13 +70,15 @@ Web Dashboard:  web / web-stop
 - ✅ **Top 20 近期净流入排名**:按 24h Supply-Withdraw 净流向聚合
 - ✅ **协议权限监控**:PoolAddressesProvider 的 9 个权限事件(PoolUpdated、ACLAdminUpdated 等)
 - ✅ **Track B 链上事件实时告警**:主循环每 tick `eth_getLogs` 权限 + 代理升级事件,新事件推 Lark L2 卡片(PRD FR-06)
+- ✅ **多链就绪**:Ethereum / Arbitrum / Optimism / Base / BNB / Polygon 的 RPC 与 Aave v3 地址均已预配,`.env` 的 `ENABLED_CHAINS` 逗号分隔即可开启
+- ✅ **WebSocket 实时推送**:Dashboard 状态栏与"最近告警"通过 `/api/ws/stream` 服务端 push 更新;WS 断开自动退回 5s/30s 轮询兜底
 
 ## 未做(v1 计划中)
 
 - ❌ 静态 aToken 余额排名(当前用"近期净流入"代替,Subgraph 接入后可切换)
 - ❌ 多协议(Compound / Morpho / Spark 骨架已预留)
 - ❌ DEX 流动性深度 + 脱锚检测
-- ❌ Dashboard 实时推送(目前 tab 数据 5s polling,下一步接 WebSocket)
+- (Dashboard 实时推送已完成,见上)
 
 ---
 

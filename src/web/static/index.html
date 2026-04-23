@@ -709,12 +709,11 @@ const state = {
 /* =========================================================
    Status bar
    ========================================================= */
-async function refreshStatus() {
-  const s = await api("/api/status");
+function applyStatus(s) {
   const stMon = document.getElementById("st-monitor");
   const stDb  = document.getElementById("st-db");
   const stRpc = document.getElementById("st-rpc");
-  if (!s.ok) {
+  if (!s || !s.ok) {
     stMon.textContent = "⭕ 状态接口异常";
     stMon.className = "item monitor-down";
     return;
@@ -728,9 +727,14 @@ async function refreshStatus() {
   }
   const db = s.db || {};
   stDb.textContent = `💾 快照 ${db.snapshots ?? "?"} / 告警 ${db.alerts ?? "?"}`;
-  // RPC 节点健康暂无接口数据,占位
   const chains = (s.chains_configured || []).length;
-  stRpc.textContent = `📡 ${chains} 链已配置`;
+  const wsTag = (typeof s.ws_clients === "number") ? ` · ⚡ ${s.ws_clients} WS` : "";
+  stRpc.textContent = `📡 ${chains} 链已配置${wsTag}`;
+}
+
+async function refreshStatus() {
+  const s = await api("/api/status");
+  applyStatus(s);
 }
 
 /* =========================================================
@@ -1280,14 +1284,11 @@ async function renderAlerts(box, pk) {
 /* =========================================================
    Bottom alert stream
    ========================================================= */
-async function refreshAlertStream() {
-  const r = await api("/api/alerts/recent?limit=10");
+const ALERT_STREAM_MAX = 10;
+
+function renderAlertStream() {
   const body = document.getElementById("alert-stream-body");
-  if (!r.ok) {
-    body.innerHTML = `<div class="error">加载告警失败: ${r.error}</div>`;
-    return;
-  }
-  const alerts = r.alerts || [];
+  const alerts = state.alertStream || [];
   if (alerts.length === 0) {
     body.innerHTML = `<div class="empty" style="padding:16px;color:#4ade80">✅ 暂无最近告警</div>`;
     return;
@@ -1315,6 +1316,138 @@ async function refreshAlertStream() {
   });
 }
 
+async function refreshAlertStream() {
+  const r = await api("/api/alerts/recent?limit=10");
+  const body = document.getElementById("alert-stream-body");
+  if (!r.ok) {
+    body.innerHTML = `<div class="error">加载告警失败: ${r.error}</div>`;
+    return;
+  }
+  state.alertStream = (r.alerts || []).slice(0, ALERT_STREAM_MAX);
+  renderAlertStream();
+}
+
+function prependAlert(alert) {
+  if (!state.alertStream) state.alertStream = [];
+  state.alertStream.unshift(alert);
+  state.alertStream = state.alertStream.slice(0, ALERT_STREAM_MAX);
+  renderAlertStream();
+}
+
+function prependEventAsAlert(ev) {
+  // Show Track B chain events in the same stream, formatted alert-like.
+  const pk = `${ev.chain || ""}:${ev.contract_role || ""}`;
+  const shortTx = ev.tx_hash ? `${ev.tx_hash.slice(0,10)}…` : "";
+  const dir = (ev.old_value && ev.new_value)
+    ? `${ev.old_value.slice(0,10)}… → ${ev.new_value.slice(0,10)}…`
+    : (ev.new_value ? ev.new_value.slice(0,10) + "…" : "");
+  prependAlert({
+    ts: ev.ts,
+    level: ev.level || "info",
+    level_zh: ev.level_zh || "事件",
+    pool_key: pk,
+    message: `🔗 [链上事件] ${ev.event} · ${dir} · tx ${shortTx}`,
+  });
+}
+
+/* =========================================================
+   WebSocket live stream
+   ========================================================= */
+const ws = {
+  socket: null,
+  reconnectDelay: 1000,      // starts 1s, backs off to 30s
+  reconnectTimer: null,
+  pingTimer: null,
+  fallbackPolling: false,
+};
+
+function wsUrl() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${location.host}/api/ws/stream`;
+}
+
+function connectWs() {
+  if (ws.socket && ws.socket.readyState === WebSocket.OPEN) return;
+  try {
+    ws.socket = new WebSocket(wsUrl());
+  } catch (e) {
+    console.warn("[ws] construct failed", e);
+    scheduleReconnect();
+    return;
+  }
+  ws.socket.onopen = () => {
+    console.log("[ws] connected");
+    ws.reconnectDelay = 1000;
+    stopFallbackPolling();
+    // ping every 25s to keep intermediaries from idling us out
+    if (ws.pingTimer) clearInterval(ws.pingTimer);
+    ws.pingTimer = setInterval(() => {
+      if (ws.socket && ws.socket.readyState === WebSocket.OPEN) {
+        ws.socket.send("ping");
+      }
+    }, 25000);
+  };
+  ws.socket.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (!msg || !msg.type) return;
+    switch (msg.type) {
+      case "status":
+        applyStatus(msg.data);
+        break;
+      case "recent_alerts":
+        state.alertStream = (msg.data || []).slice(0, ALERT_STREAM_MAX);
+        renderAlertStream();
+        break;
+      case "alert":
+        prependAlert(msg.data);
+        break;
+      case "event":
+        prependEventAsAlert(msg.data);
+        break;
+      case "pong":
+        break;
+      default:
+        console.debug("[ws] unknown msg", msg);
+    }
+  };
+  ws.socket.onclose = () => {
+    console.log("[ws] closed, reconnecting soon");
+    if (ws.pingTimer) { clearInterval(ws.pingTimer); ws.pingTimer = null; }
+    scheduleReconnect();
+    startFallbackPolling();
+  };
+  ws.socket.onerror = (e) => {
+    console.warn("[ws] error", e);
+    // onclose will also fire; reconnect handled there
+  };
+}
+
+function scheduleReconnect() {
+  if (ws.reconnectTimer) return;
+  const delay = ws.reconnectDelay;
+  ws.reconnectTimer = setTimeout(() => {
+    ws.reconnectTimer = null;
+    ws.reconnectDelay = Math.min(30000, ws.reconnectDelay * 2);
+    connectWs();
+  }, delay);
+}
+
+let _fallbackStatusTimer = null;
+let _fallbackAlertsTimer = null;
+function startFallbackPolling() {
+  if (ws.fallbackPolling) return;
+  ws.fallbackPolling = true;
+  _fallbackStatusTimer = setInterval(refreshStatus, 5000);
+  _fallbackAlertsTimer = setInterval(refreshAlertStream, 30000);
+}
+function stopFallbackPolling() {
+  if (!ws.fallbackPolling) return;
+  ws.fallbackPolling = false;
+  if (_fallbackStatusTimer) { clearInterval(_fallbackStatusTimer); _fallbackStatusTimer = null; }
+  if (_fallbackAlertsTimer) { clearInterval(_fallbackAlertsTimer); _fallbackAlertsTimer = null; }
+}
+
 /* =========================================================
    Boot
    ========================================================= */
@@ -1325,12 +1458,13 @@ async function boot() {
     state.currentTab = r.tab;
     syncTabUi();
   }
+  // initial REST fetch so the UI paints immediately even if WS takes a beat
   await Promise.all([refreshStatus(), loadPools(), refreshAlertStream()]);
   renderBreadcrumb();
   renderTree();
   renderTab();
-  setInterval(refreshStatus, 5000);
-  setInterval(refreshAlertStream, 30000);
+  // switch status + alert stream from polling to WebSocket server-push
+  connectWs();
 }
 
 document.addEventListener("DOMContentLoaded", boot);

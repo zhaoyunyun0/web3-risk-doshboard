@@ -1,6 +1,10 @@
 # RPC Configuration
 # Each chain has multiple providers for failover + load balancing.
 # Tier 1 = primary, Tier 2 = backup, Tier 3 = emergency (set via env)
+#
+# Public endpoints only — no API keys required. Verified 2026-04-23 via
+# `./w3risk probe`. Dead/authenticated-only nodes (rpc.ankr.com, several
+# llamarpc subdomains, polygon-rpc.com) were removed.
 
 chains:
   ethereum:
@@ -36,10 +40,7 @@ chains:
       - url: "https://arbitrum.publicnode.com"
         tier: 1
         weight: 30
-      - url: "https://rpc.ankr.com/arbitrum"
-        tier: 2
-        weight: 20
-      - url: "https://arbitrum.llamarpc.com"
+      - url: "https://arbitrum-one-rpc.publicnode.com"
         tier: 2
         weight: 20
 
@@ -52,10 +53,7 @@ chains:
       - url: "https://optimism.publicnode.com"
         tier: 1
         weight: 30
-      - url: "https://rpc.ankr.com/optimism"
-        tier: 2
-        weight: 20
-      - url: "https://optimism.llamarpc.com"
+      - url: "https://optimism.drpc.org"
         tier: 2
         weight: 20
 
@@ -71,17 +69,20 @@ chains:
       - url: "https://base.llamarpc.com"
         tier: 2
         weight: 20
+      - url: "https://base.drpc.org"
+        tier: 2
+        weight: 20
 
   polygon:
     chain_id: 137
     providers:
-      - url: "https://polygon-rpc.com"
-        tier: 1
-        weight: 30
       - url: "https://polygon-bor-rpc.publicnode.com"
         tier: 1
         weight: 30
-      - url: "https://rpc.ankr.com/polygon"
+      - url: "https://polygon.drpc.org"
+        tier: 1
+        weight: 30
+      - url: "https://polygon-mainnet-rpc.publicnode.com"
         tier: 2
         weight: 20
 
@@ -94,7 +95,10 @@ chains:
       - url: "https://bsc.publicnode.com"
         tier: 1
         weight: 30
-      - url: "https://rpc.ankr.com/bsc"
+      - url: "https://bsc.drpc.org"
+        tier: 2
+        weight: 20
+      - url: "https://bsc-dataseed1.defibit.io"
         tier: 2
         weight: 20
 

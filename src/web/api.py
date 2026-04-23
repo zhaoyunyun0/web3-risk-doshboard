@@ -10,7 +10,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+import asyncio
+
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +31,7 @@ from .on_demand import (
     fetch_top_holders_by_netflow,
 )
 from .resolver import AaveDeploymentResolver
+from .ws_hub import WsHub, sqlite_watcher
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -55,8 +58,16 @@ class AppState:
         self.holders_cache = TTLCache(ttl_sec=300)
         self.permissions_cache = TTLCache(ttl_sec=60)
         self.server_started_at = time.time()
+        self.ws_hub = WsHub()
+        self.ws_watcher_task: asyncio.Task | None = None
 
     async def close(self) -> None:
+        if self.ws_watcher_task is not None and not self.ws_watcher_task.done():
+            self.ws_watcher_task.cancel()
+            try:
+                await self.ws_watcher_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         for pool in self.rpc_pools.values():
             try:
                 await pool.close()
@@ -88,8 +99,17 @@ async def _startup() -> None:
     global state
     state = AppState()
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Background watcher: polls SQLite every 2s, broadcasts new alerts/events
+    # to all WebSocket clients. Running inside the web process, so it sees
+    # rows written by the separate monitor process via SQLite WAL.
+    st = state
+    state.ws_watcher_task = asyncio.create_task(
+        sqlite_watcher(st.ws_hub, st.sink, _status_payload)
+    )
+
     log.info(
-        "web api started (chains=%s protocols=%s)",
+        "web api started (chains=%s protocols=%s ws=on)",
         list(state.rpc_pools.keys()), state.cfg.enabled_protocols,
     )
 
@@ -190,8 +210,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), na
 
 
 # ---------- /api/status ----------
-@app.get("/api/status")
-async def api_status() -> dict:
+def _status_payload() -> dict:
     st = _require_state()
     running, pid = _monitor_status()
     stats = st.sink.stats()
@@ -208,7 +227,13 @@ async def api_status() -> dict:
         },
         "chains_configured": list(st.rpc_pools.keys()),
         "protocols_configured": list(st.cfg.enabled_protocols),
+        "ws_clients": st.ws_hub.client_count(),
     }
+
+
+@app.get("/api/status")
+async def api_status() -> dict:
+    return _status_payload()
 
 
 # ---------- /api/protocols ----------
@@ -453,6 +478,49 @@ async def api_permissions(
         "cached_at": cached_at,
         "events": events,
     }
+
+
+# ---------- /api/ws/stream ----------
+@app.websocket("/api/ws/stream")
+async def ws_stream(ws: WebSocket) -> None:
+    """Server-push stream.
+
+    Clients receive three message types:
+      {"type": "alert",  "data": {<alert fields>}}
+      {"type": "event",  "data": {<event fields>}}
+      {"type": "status", "data": {<status fields>}, "ts": <float>}
+
+    On connect, server sends one immediate "status" + one "recent_alerts"
+    snapshot so the UI does not need to make initial REST calls.
+    """
+    st = _require_state()
+    await ws.accept()
+    await st.ws_hub.register(ws)
+
+    # initial snapshot
+    try:
+        await ws.send_json({"type": "status", "data": _status_payload(), "ts": time.time()})
+        recent = st.sink.recent_alerts(limit=20)
+        await ws.send_json({
+            "type": "recent_alerts",
+            "data": [_alert_row_to_obj(r, include_pool_info=True) for r in recent],
+        })
+    except Exception as exc:  # noqa: BLE001
+        log.debug("ws initial snapshot failed: %s", exc)
+
+    try:
+        # keep the connection open; we only need it to detect disconnect.
+        # Clients don't need to send anything, but ping messages are fine.
+        while True:
+            msg = await ws.receive_text()
+            if msg == "ping":
+                await ws.send_json({"type": "pong", "ts": time.time()})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        log.debug("ws recv loop ended: %s", exc)
+    finally:
+        await st.ws_hub.unregister(ws)
 
 
 # ---------- /api/alerts/recent ----------
