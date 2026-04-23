@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..config import AppConfig, load_config
+from ..hidden_pools import HiddenPoolStore
 from ..lark_notifier import CHAIN_ZH, LEVEL_ZH, PROTOCOL_ZH
 from ..logger import log
 from ..mute_store import MuteStore, parse_duration
@@ -47,6 +48,7 @@ class AppState:
         self.cfg: AppConfig = load_config()
         self.sink = SqliteSink(db_path=str(DB_PATH), retention_days=7)
         self.mute_store = MuteStore()
+        self.hidden_pools = HiddenPoolStore()
         self.rpc_pools: dict[str, RpcPool] = {}
         for chain in self.cfg.enabled_chains:
             if chain not in self.cfg.chains:
@@ -266,8 +268,50 @@ async def api_protocols() -> dict:
 @app.get("/api/pools")
 async def api_pools() -> dict:
     st = _require_state()
+    # reload from disk so CLI / parallel API changes are visible
+    st.hidden_pools.reload_if_changed()
+    hidden = st.hidden_pools.hidden_set()
     rows = st.sink.list_pools_latest()
+    rows = [r for r in rows if r["pool_key"] not in hidden]
     return {"ok": True, "pools": [_pool_row_to_obj(r) for r in rows]}
+
+
+@app.delete("/api/pools/{pool_key}")
+async def api_pool_delete(pool_key: str, reason: str = Query("UI 删除")) -> dict:
+    """Hide a pool from the dashboard. No new snapshots/alerts will be
+    generated for it; existing history stays in SQLite and can be
+    restored via POST /api/hidden_pools/{pool_key}/restore."""
+    st = _require_state()
+    entry = st.hidden_pools.add(pool_key, reason=reason)
+    log.info("pool hidden pool_key=%s reason=%r", pool_key, entry.reason)
+    return {
+        "ok": True,
+        "pool_key": entry.pool_key,
+        "hidden_at": entry.hidden_at,
+        "reason": entry.reason,
+    }
+
+
+@app.get("/api/hidden_pools")
+async def api_hidden_pools_list() -> dict:
+    st = _require_state()
+    st.hidden_pools.reload_if_changed()
+    return {
+        "ok": True,
+        "hidden": [
+            {"pool_key": h.pool_key, "hidden_at": h.hidden_at, "reason": h.reason}
+            for h in st.hidden_pools.list_all()
+        ],
+    }
+
+
+@app.post("/api/hidden_pools/{pool_key}/restore")
+async def api_pool_restore(pool_key: str) -> dict:
+    st = _require_state()
+    removed = st.hidden_pools.remove(pool_key)
+    if removed:
+        log.info("pool restored pool_key=%s", pool_key)
+    return {"ok": True, "pool_key": pool_key, "restored": bool(removed)}
 
 
 # ---------- /api/pools/{pool_key}/overview ----------

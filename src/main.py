@@ -8,6 +8,7 @@ import time
 from .aave_v3_collector import AaveV3Collector
 from .config import AppConfig, level_ge, load_config
 from .event_tracker import EventTracker
+from .hidden_pools import HiddenPoolStore
 from .lark_notifier import LarkNotifier
 from .logger import log
 from .mute_store import MuteStore, parse_duration
@@ -25,12 +26,14 @@ class ChainWorker:
         notifier: LarkNotifier,
         sink: SqliteSink | None,
         mute_store: MuteStore | None = None,
+        hidden_pools: HiddenPoolStore | None = None,
     ):
         self.chain = chain
         self.cfg = cfg
         self.notifier = notifier
         self.sink = sink
         self.mute_store = mute_store
+        self.hidden_pools = hidden_pools
         self.rpc_pool = RpcPool(chain, cfg.chains[chain], cfg.defaults)
         self.store = SnapshotStore(retention_sec=3600, sink=sink)
         self.rule_engine = RuleEngine(cfg.rules)
@@ -82,6 +85,23 @@ class ChainWorker:
         if not all_snaps:
             log.warning("chain=%s no snapshots collected this tick", self.chain)
             return
+
+        # Drop hidden pools: no store, no rule eval, no alerts, no DB writes.
+        # Reload from YAML so CLI / UI changes take effect without restart.
+        if self.hidden_pools is not None:
+            self.hidden_pools.reload_if_changed()
+            hidden = self.hidden_pools.hidden_set()
+            if hidden:
+                before = len(all_snaps)
+                all_snaps = [s for s in all_snaps if s.pool_key not in hidden]
+                dropped = before - len(all_snaps)
+                if dropped:
+                    log.debug(
+                        "chain=%s dropped %d hidden pool snapshots",
+                        self.chain, dropped,
+                    )
+            if not all_snaps:
+                return
 
         self.store.add(all_snaps)
 
@@ -157,12 +177,16 @@ async def run_loop(cfg: AppConfig) -> None:
                 m.pool_key, m.rule or "*", m.human_until(), m.reason,
             )
 
+    hidden_pools = HiddenPoolStore()
+    if hidden_pools.list_all():
+        log.info("已加载 %d 个已删除池子(不采集不告警)", len(hidden_pools.list_all()))
+
     workers: list[ChainWorker] = []
     for chain in cfg.enabled_chains:
         if chain not in cfg.chains:
             log.warning("chain=%s not in rpc config, skip", chain)
             continue
-        w = ChainWorker(chain, cfg, notifier, sink, mute_store=mute_store)
+        w = ChainWorker(chain, cfg, notifier, sink, mute_store=mute_store, hidden_pools=hidden_pools)
         try:
             await w.init()
         except Exception as exc:  # noqa: BLE001

@@ -364,6 +364,7 @@
       <input type="text" id="tree-search" placeholder="搜索池子 (如 USDC)…">
     </div>
     <div id="tree-root"><div class="loading">加载池子…</div></div>
+    <div id="hidden-pools-panel" style="margin-top:12px;padding-top:12px;border-top:1px dashed #1e293b"></div>
   </aside>
 
   <section class="main-panel">
@@ -955,8 +956,41 @@ async function renderOverview(box, pk) {
       </div>
     </div>
     <div id="mute-panel-container"></div>
+    <div style="margin-top:12px;padding:12px 16px;background:#1a0b0b;border:1px solid #450a0a;border-radius:6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="color:#fca5a5;font-size:12px">🗑 从面板删除这个池子(停止采集 + 停止告警,可恢复)</span>
+      <button id="delete-pool-btn" style="margin-left:auto;padding:6px 14px;background:#7f1d1d;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">删除 ${p.symbol}</button>
+    </div>
   `;
   renderMutePanel("mute-panel-container", pk);
+  const delBtn = document.getElementById("delete-pool-btn");
+  if (delBtn) {
+    delBtn.onclick = async () => {
+      if (!confirm(`确认从面板删除 ${p.symbol}(${pk})?\n\n• 监控进程会停止采集这个池子(无新快照)\n• 不再产生告警,不推 Lark\n• 侧栏将隐藏,但历史数据保留,可在侧栏底部"已删除池子"里恢复`)) return;
+      const reason = prompt("删除原因?(可留空)", "") || "UI 删除";
+      delBtn.disabled = true;
+      delBtn.textContent = "删除中…";
+      const resp = await apiDeletePool(pk, reason);
+      if (resp.ok) {
+        await loadPools();
+        await renderHiddenPoolsPanel();
+        // switch to first remaining pool, or clear selection
+        const remaining = state.pools.filter(x => x.pool_key !== pk);
+        if (remaining.length) {
+          state.currentPoolKey = remaining[0].pool_key;
+          setHash(remaining[0].pool_key, "overview");
+        } else {
+          state.currentPoolKey = null;
+        }
+        renderBreadcrumb();
+        renderTree(document.getElementById("tree-search").value);
+        renderTab();
+      } else {
+        alert("删除失败: " + (resp.error || ""));
+        delBtn.disabled = false;
+        delBtn.textContent = `删除 ${p.symbol}`;
+      }
+    };
+  }
 }
 
 /* =========================================================
@@ -1080,6 +1114,73 @@ async function renderMutePanel(containerId, pool_key) {
         alert("取消失败: " + (resp.error || resp.detail || "未知错误"));
         btn.disabled = false;
         btn.textContent = "取消";
+      }
+    };
+  });
+}
+
+/* =========================================================
+   Hidden pools (delete + restore)
+   ========================================================= */
+async function apiDeletePool(pool_key, reason) {
+  try {
+    const qs = new URLSearchParams({reason: reason || "UI 删除"});
+    const r = await fetch(`/api/pools/${encodeURIComponent(pool_key)}?${qs}`, {method: "DELETE"});
+    return await r.json();
+  } catch (e) {
+    return {ok: false, error: e.message || "network error"};
+  }
+}
+
+async function apiListHiddenPools() {
+  return await api("/api/hidden_pools");
+}
+
+async function apiRestorePool(pool_key) {
+  try {
+    const r = await fetch(`/api/hidden_pools/${encodeURIComponent(pool_key)}/restore`, {method: "POST"});
+    return await r.json();
+  } catch (e) {
+    return {ok: false, error: e.message || "network error"};
+  }
+}
+
+async function renderHiddenPoolsPanel() {
+  const el = document.getElementById("hidden-pools-panel");
+  if (!el) return;
+  const r = await apiListHiddenPools();
+  const list = (r.ok && r.hidden) || [];
+  if (list.length === 0) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = `
+    <details style="font-size:12px">
+      <summary style="color:#94a3b8;cursor:pointer;padding:4px 8px">🗑 已删除池子 (${list.length})</summary>
+      <div style="margin-top:6px">
+        ${list.map(h => `
+          <div style="padding:4px 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span class="mono" style="color:#64748b;font-size:11px">${h.pool_key}</span>
+            <button class="restore-btn" data-pk="${h.pool_key}" style="margin-left:auto;padding:1px 6px;background:#065f46;color:#d1fae5;border:1px solid #10b981;border-radius:3px;cursor:pointer;font-size:11px">恢复</button>
+          </div>
+        `).join("")}
+      </div>
+    </details>
+  `;
+  el.querySelectorAll(".restore-btn").forEach(btn => {
+    btn.onclick = async () => {
+      const pk = btn.dataset.pk;
+      btn.disabled = true;
+      btn.textContent = "恢复中…";
+      const resp = await apiRestorePool(pk);
+      if (resp.ok) {
+        await loadPools();
+        await renderHiddenPoolsPanel();
+        renderTree(document.getElementById("tree-search").value);
+      } else {
+        alert("恢复失败: " + (resp.error || ""));
+        btn.disabled = false;
+        btn.textContent = "恢复";
       }
     };
   });
@@ -1668,7 +1769,7 @@ async function boot() {
     syncTabUi();
   }
   // initial REST fetch so the UI paints immediately even if WS takes a beat
-  await Promise.all([refreshStatus(), loadPools(), refreshAlertStream()]);
+  await Promise.all([refreshStatus(), loadPools(), refreshAlertStream(), renderHiddenPoolsPanel()]);
   renderBreadcrumb();
   renderTree();
   renderTab();
