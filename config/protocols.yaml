@@ -15,6 +15,8 @@ aave_v3:
     pool_addresses_provider: "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"
   bnb:
     pool_addresses_provider: "0xff75B6da14FfbbfD355Daf7a2731456b3562Ba6D"
+  avaxc:
+    pool_addresses_provider: "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"
 
 # Optional: only monitor a subset (leave empty to monitor all reserves in the pool)
 # Use symbol to filter, case-insensitive
@@ -25,3 +27,4 @@ aave_v3_watchlist:
   base: ["WETH", "USDC", "cbBTC", "wstETH"]
   polygon: ["WETH", "USDC", "USDT", "WMATIC"]
   bnb: ["WBNB", "USDT", "USDC", "BTCB"]
+  avaxc: ["WAVAX", "USDC", "USDT", "WETH.e", "BTC.b", "sAVAX"]

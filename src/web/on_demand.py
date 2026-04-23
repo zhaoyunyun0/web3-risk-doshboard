@@ -41,6 +41,7 @@ BLOCKS_PER_HOUR = {
     "base": 1_800,        # 2s
     "polygon": 1_600,     # ~2.2s
     "bnb": 1_200,         # 3s
+    "avaxc": 1_800,       # 2s (Avalanche C-Chain)
 }
 
 

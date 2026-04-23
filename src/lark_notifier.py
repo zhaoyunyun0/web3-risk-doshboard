@@ -36,6 +36,7 @@ CHAIN_ZH = {
     "base": "Base",
     "polygon": "Polygon",
     "bnb": "BNB Chain",
+    "avaxc": "Avalanche C",
     "avalanche": "Avalanche",
     "gnosis": "Gnosis",
     "katana": "Katana",
@@ -48,6 +49,7 @@ ETHERSCAN_BASES = {
     "base": "https://basescan.org",
     "polygon": "https://polygonscan.com",
     "bnb": "https://bscscan.com",
+    "avaxc": "https://snowtrace.io",
 }
 
 

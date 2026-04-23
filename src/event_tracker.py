@@ -42,6 +42,7 @@ DEFAULT_LOOKBACK_BLOCKS = {
     "base": 50_000,       # 2s → ~28h (capped)
     "polygon": 50_000,    # ~2.2s → ~31h (capped)
     "bnb": 50_000,        # 3s → ~42h (capped)
+    "avaxc": 50_000,      # 2s → ~28h (capped)
 }
 
 # Defaults if rules.yaml doesn't override them (PRD FR-06 defaults).

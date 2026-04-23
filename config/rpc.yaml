@@ -102,6 +102,22 @@ chains:
         tier: 2
         weight: 20
 
+  avaxc:
+    chain_id: 43114
+    providers:
+      - url: "https://api.avax.network/ext/bc/C/rpc"
+        tier: 1
+        weight: 30
+      - url: "https://avalanche-c-chain-rpc.publicnode.com"
+        tier: 1
+        weight: 30
+      - url: "https://avalanche.drpc.org"
+        tier: 2
+        weight: 20
+      - url: "https://avalanche.blockpi.network/v1/rpc/public"
+        tier: 2
+        weight: 20
+
 # Retry / circuit breaker defaults (can be overridden per-provider)
 defaults:
   max_retries: 3
