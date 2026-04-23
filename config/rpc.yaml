@@ -1,0 +1,122 @@
+# RPC Configuration
+# Each chain has multiple providers for failover + load balancing.
+# Tier 1 = primary, Tier 2 = backup, Tier 3 = emergency (set via env)
+
+chains:
+  ethereum:
+    chain_id: 1
+    providers:
+      - url: "https://eth.llamarpc.com"
+        tier: 1
+        weight: 30
+        rate_limit_qps: 10
+        timeout_sec: 10
+      - url: "https://ethereum.publicnode.com"
+        tier: 1
+        weight: 30
+        rate_limit_qps: 10
+        timeout_sec: 10
+      - url: "https://eth.drpc.org"
+        tier: 2
+        weight: 20
+        rate_limit_qps: 8
+        timeout_sec: 10
+      - url: "https://rpc.flashbots.net"
+        tier: 2
+        weight: 20
+        rate_limit_qps: 8
+        timeout_sec: 10
+
+  arbitrum:
+    chain_id: 42161
+    providers:
+      - url: "https://arb1.arbitrum.io/rpc"
+        tier: 1
+        weight: 30
+      - url: "https://arbitrum.publicnode.com"
+        tier: 1
+        weight: 30
+      - url: "https://rpc.ankr.com/arbitrum"
+        tier: 2
+        weight: 20
+      - url: "https://arbitrum.llamarpc.com"
+        tier: 2
+        weight: 20
+
+  optimism:
+    chain_id: 10
+    providers:
+      - url: "https://mainnet.optimism.io"
+        tier: 1
+        weight: 30
+      - url: "https://optimism.publicnode.com"
+        tier: 1
+        weight: 30
+      - url: "https://rpc.ankr.com/optimism"
+        tier: 2
+        weight: 20
+      - url: "https://optimism.llamarpc.com"
+        tier: 2
+        weight: 20
+
+  base:
+    chain_id: 8453
+    providers:
+      - url: "https://mainnet.base.org"
+        tier: 1
+        weight: 30
+      - url: "https://base.publicnode.com"
+        tier: 1
+        weight: 30
+      - url: "https://base.llamarpc.com"
+        tier: 2
+        weight: 20
+
+  polygon:
+    chain_id: 137
+    providers:
+      - url: "https://polygon-rpc.com"
+        tier: 1
+        weight: 30
+      - url: "https://polygon-bor-rpc.publicnode.com"
+        tier: 1
+        weight: 30
+      - url: "https://rpc.ankr.com/polygon"
+        tier: 2
+        weight: 20
+
+  bnb:
+    chain_id: 56
+    providers:
+      - url: "https://bsc-dataseed.binance.org"
+        tier: 1
+        weight: 30
+      - url: "https://bsc.publicnode.com"
+        tier: 1
+        weight: 30
+      - url: "https://rpc.ankr.com/bsc"
+        tier: 2
+        weight: 20
+
+# Retry / circuit breaker defaults (can be overridden per-provider)
+defaults:
+  max_retries: 3
+  backoff_base_ms: 500
+  backoff_max_ms: 8000
+  total_timeout_sec: 30
+  circuit:
+    failure_threshold: 5
+    failure_window_sec: 60
+    cooldown_sec: 60
+    cooldown_max_sec: 600
+    half_open_probe: 10
+    half_open_success_rate: 0.8
+  health:
+    success_delta: 1
+    failure_delta: -5
+    timeout_delta: -10
+    rate_limit_delta: -15
+    floor: 0
+    ceiling: 100
+    half_open_threshold: 30
+    force_open_threshold: 10

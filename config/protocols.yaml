@@ -1,0 +1,27 @@
+# Protocol deployments per chain
+# For Aave v3 we only need PoolAddressesProvider; Pool / DataProvider / Oracle
+# are resolved dynamically at startup (governance can swap them).
+
+aave_v3:
+  ethereum:
+    pool_addresses_provider: "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"
+  arbitrum:
+    pool_addresses_provider: "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"
+  optimism:
+    pool_addresses_provider: "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"
+  base:
+    pool_addresses_provider: "0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D"
+  polygon:
+    pool_addresses_provider: "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"
+  bnb:
+    pool_addresses_provider: "0xff75B6da14FfbbfD355Daf7a2731456b3562Ba6D"
+
+# Optional: only monitor a subset (leave empty to monitor all reserves in the pool)
+# Use symbol to filter, case-insensitive
+aave_v3_watchlist:
+  ethereum: ["WETH", "USDC", "USDT", "DAI", "wstETH", "WBTC", "weETH", "rETH"]
+  arbitrum: ["WETH", "USDC", "USDT", "wstETH", "WBTC"]
+  optimism: ["WETH", "USDC", "USDT", "wstETH"]
+  base: ["WETH", "USDC", "cbBTC", "wstETH"]
+  polygon: ["WETH", "USDC", "USDT", "WMATIC"]
+  bnb: ["WBNB", "USDT", "USDC", "BTCB"]

@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>w3_risk_dashboard — DeFi 借贷池安全预警</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  /* ========= Base ========= */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #0b1220;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    height: 100%;
+    overflow: hidden;
+  }
+  body { display: flex; flex-direction: column; height: 100vh; }
+  a { color: #22d3ee; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, "Roboto Mono", monospace; }
+
+  /* ========= Layout ========= */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    background: #141b2e;
+    border-bottom: 1px solid #1e293b;
+    flex-shrink: 0;
+  }
+  header .brand {
+    font-size: 16px; font-weight: 600; color: #e2e8f0;
+  }
+  header .brand .logo { color: #22d3ee; margin-right: 4px; }
+  header .status-bar {
+    display: flex; align-items: center; gap: 18px;
+    font-size: 12px;
+  }
+  header .status-bar .item { white-space: nowrap; }
+  .monitor-down { color: #f87171; font-weight: 600; }
+  .monitor-up { color: #4ade80; }
+
+  main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  aside.tree-panel {
+    width: 260px;
+    background: #141b2e;
+    border-right: 1px solid #1e293b;
+    overflow-y: auto;
+    flex-shrink: 0;
+    padding: 8px 0;
+  }
+  .tree-search {
+    padding: 6px 10px;
+  }
+  .tree-search input {
+    width: 100%;
+    background: #0b1220;
+    color: #e2e8f0;
+    border: 1px solid #1e293b;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 12px;
+    outline: none;
+  }
+  .tree-search input:focus { border-color: #22d3ee; }
+  .tree-node {
+    padding: 4px 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .tree-node.protocol { font-weight: 600; color: #e2e8f0; }
+  .tree-node.chain { padding-left: 24px; color: #94a3b8; }
+  .tree-node.pool {
+    padding-left: 42px;
+    color: #cbd5e1;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .tree-node.pool:hover { background: #1e293b; color: #e2e8f0; }
+  .tree-node.pool.active { background: #1e293b; color: #22d3ee; border-left: 2px solid #22d3ee; padding-left: 40px; }
+  .tree-arrow { display: inline-block; width: 12px; color: #64748b; }
+  .tree-node.collapsed .tree-children { display: none; }
+  .pool-tvl { font-size: 11px; color: #64748b; }
+
+  section.main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .breadcrumb {
+    padding: 10px 16px;
+    background: #141b2e;
+    border-bottom: 1px solid #1e293b;
+    font-size: 13px;
+    color: #94a3b8;
+    flex-shrink: 0;
+  }
+  .breadcrumb .sep { color: #475569; margin: 0 6px; }
+  .breadcrumb .current { color: #e2e8f0; font-weight: 600; }
+
+  .tabs {
+    display: flex;
+    background: #0b1220;
+    border-bottom: 1px solid #1e293b;
+    flex-shrink: 0;
+  }
+  .tab {
+    padding: 10px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #94a3b8;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+  .tab:hover { color: #e2e8f0; }
+  .tab.active { color: #22d3ee; border-bottom-color: #22d3ee; }
+
+  .tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 0;
+  }
+
+  footer.alert-stream {
+    height: 150px;
+    background: #141b2e;
+    border-top: 1px solid #1e293b;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  footer .stream-title {
+    padding: 6px 16px;
+    font-size: 12px;
+    color: #94a3b8;
+    border-bottom: 1px solid #1e293b;
+    position: sticky; top: 0;
+    background: #141b2e;
+  }
+  .alert-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 16px;
+    font-size: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #1e293b;
+  }
+  .alert-row:hover { background: #1e293b; }
+  .alert-row .ts { color: #64748b; width: 140px; flex-shrink: 0; }
+  .alert-row .level-tag { padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+  .alert-row .pool { color: #cbd5e1; width: 260px; flex-shrink: 0; }
+  .alert-row .msg { color: #e2e8f0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .level-info     { background: rgba(96, 165, 250, 0.15); color: #60a5fa; }
+  .level-warning  { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+  .level-alert    { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
+  .level-critical { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+
+  .level-row-warning  { border-left: 3px solid #facc15; }
+  .level-row-alert    { border-left: 3px solid #fb923c; }
+  .level-row-critical { border-left: 3px solid #f87171; }
+
+  /* ========= Cards / Overview ========= */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .kpi-card {
+    background: #141b2e;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .kpi-label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+  .kpi-value { font-size: 22px; font-weight: 600; color: #e2e8f0; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .kpi-sub { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 8px 16px;
+    background: #141b2e;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 12px 16px;
+  }
+  .info-item { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; }
+  .info-item .k { color: #94a3b8; }
+  .info-item .v { color: #e2e8f0; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .copy-btn {
+    background: transparent; border: 1px solid #1e293b;
+    color: #64748b; padding: 1px 6px; font-size: 10px;
+    border-radius: 3px; cursor: pointer; margin-left: 6px;
+  }
+  .copy-btn:hover { color: #22d3ee; border-color: #22d3ee; }
+
+  /* ========= Controls ========= */
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .range-switcher { display: inline-flex; border: 1px solid #1e293b; border-radius: 4px; overflow: hidden; }
+  .range-switcher button {
+    background: #141b2e; color: #94a3b8;
+    border: none; padding: 5px 12px;
+    cursor: pointer; font-size: 12px;
+    border-right: 1px solid #1e293b;
+  }
+  .range-switcher button:last-child { border-right: none; }
+  .range-switcher button.active { background: #22d3ee; color: #0b1220; font-weight: 600; }
+  .range-switcher button:hover:not(.active) { background: #1e293b; color: #e2e8f0; }
+
+  .threshold-input {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: #94a3b8;
+  }
+  .threshold-input input {
+    width: 120px; background: #0b1220; color: #e2e8f0;
+    border: 1px solid #1e293b; border-radius: 4px;
+    padding: 5px 8px; font-size: 12px; outline: none;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  .threshold-input input:focus { border-color: #22d3ee; }
+
+  /* ========= Tables ========= */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #141b2e;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+  .data-table th {
+    text-align: left;
+    padding: 8px 10px;
+    background: #0b1220;
+    color: #94a3b8;
+    font-weight: 600;
+    font-size: 11px;
+    border-bottom: 1px solid #1e293b;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .data-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #1e293b;
+    height: 32px;
+    color: #e2e8f0;
+    vertical-align: middle;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: #1e293b; }
+  .data-table .num { font-family: "SF Mono", Menlo, Consolas, monospace; text-align: right; }
+  .data-table .addr { font-family: "SF Mono", Menlo, Consolas, monospace; color: #cbd5e1; }
+  .data-table .addr:hover { color: #22d3ee; cursor: pointer; }
+
+  .evt-supply td:nth-child(2) { color: #4ade80; }
+  .evt-withdraw td:nth-child(2) { color: #facc15; }
+  .evt-borrow td:nth-child(2) { color: #60a5fa; }
+  .evt-repay td:nth-child(2) { color: #a78bfa; }
+  .evt-liquidationcall td { background: rgba(248, 113, 113, 0.08); }
+  .evt-liquidationcall td:nth-child(2) { color: #f87171; font-weight: 600; }
+
+  .net-positive { color: #4ade80; font-weight: 600; }
+  .net-negative { color: #f87171; font-weight: 600; }
+
+  /* ========= Chart ========= */
+  .chart-wrap {
+    background: #141b2e;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 12px;
+    height: 420px;
+    position: relative;
+  }
+
+  /* ========= Misc ========= */
+  .empty, .error, .loading {
+    padding: 40px 20px;
+    text-align: center;
+    color: #64748b;
+    font-size: 13px;
+  }
+  .error { color: #f87171; }
+  .notice-warning {
+    background: rgba(250, 204, 21, 0.1);
+    border: 1px solid rgba(250, 204, 21, 0.3);
+    color: #facc15;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .tab-description {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+  }
+
+  .alerts-table .metrics-row td {
+    background: #0b1220;
+    border-bottom: 1px solid #1e293b;
+    padding: 8px 12px;
+    color: #94a3b8;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .expand-btn {
+    background: none; border: none; color: #22d3ee;
+    font-size: 11px; cursor: pointer; padding: 0;
+  }
+
+  .tooltip {
+    position: absolute;
+    background: #0b1220;
+    border: 1px solid #22d3ee;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: #e2e8f0;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 1000;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #0b1220; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #334155; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="logo">🛡</span> w3_risk_dashboard</div>
+  <div class="status-bar" id="status-bar">
+    <span class="item" id="st-monitor">⏳ 加载中…</span>
+    <span class="item" id="st-db"></span>
+    <span class="item" id="st-rpc"></span>
+  </div>
+</header>
+
+<main>
+  <aside class="tree-panel">
+    <div class="tree-search">
+      <input type="text" id="tree-search" placeholder="搜索池子 (如 USDC)…">
+    </div>
+    <div id="tree-root"><div class="loading">加载池子…</div></div>
+  </aside>
+
+  <section class="main-panel">
+    <div class="breadcrumb" id="breadcrumb">未选择池子</div>
+
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-tab="overview">概览</div>
+      <div class="tab" data-tab="trend">趋势</div>
+      <div class="tab" data-tab="activity">活动</div>
+      <div class="tab" data-tab="holders">持仓</div>
+      <div class="tab" data-tab="permissions">权限</div>
+      <div class="tab" data-tab="alerts">告警</div>
+    </div>
+
+    <div class="tab-content" id="tab-content">
+      <div class="empty">请从左侧选择一个池子开始查看</div>
+    </div>
+  </section>
+</main>
+
+<footer class="alert-stream">
+  <div class="stream-title">📢 最近告警（全局，每 30s 刷新）</div>
+  <div id="alert-stream-body"><div class="loading">加载告警…</div></div>
+</footer>
+
+<script>
+/* =========================================================
+   Mock data & mockFetch
+   ========================================================= */
+const MOCK = location.search.includes("mock=1");
+
+function _mockPools() {
+  return [
+    { pool_key: "ethereum:aave_v3:USDC", chain: "ethereum", protocol: "aave_v3", symbol: "USDC",
+      asset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", ts: Date.now()/1000 - 60,
+      block_number: 24942874, supply_usd: 1.79e9, borrow_usd: 1.76e9,
+      available_liquidity_usd: 2.49e7, utilization_pct: 98.61, price_usd: 0.9999 },
+    { pool_key: "ethereum:aave_v3:USDT", chain: "ethereum", protocol: "aave_v3", symbol: "USDT",
+      asset: "0xdAC17F958D2ee523a2206206994597C13D831ec7", ts: Date.now()/1000 - 55,
+      block_number: 24942873, supply_usd: 1.21e9, borrow_usd: 1.03e9,
+      available_liquidity_usd: 1.8e8, utilization_pct: 85.1, price_usd: 1.0001 },
+    { pool_key: "ethereum:aave_v3:WETH", chain: "ethereum", protocol: "aave_v3", symbol: "WETH",
+      asset: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", ts: Date.now()/1000 - 50,
+      block_number: 24942872, supply_usd: 2.34e9, borrow_usd: 3.2e8,
+      available_liquidity_usd: 2.02e9, utilization_pct: 13.7, price_usd: 3200.12 },
+    { pool_key: "ethereum:aave_v3:DAI", chain: "ethereum", protocol: "aave_v3", symbol: "DAI",
+      asset: "0x6B175474E89094C44Da98b954EedeAC495271d0F", ts: Date.now()/1000 - 45,
+      block_number: 24942870, supply_usd: 2.1e8, borrow_usd: 1.6e8,
+      available_liquidity_usd: 5.0e7, utilization_pct: 76.19, price_usd: 1.0003 },
+    { pool_key: "arbitrum:aave_v3:USDC", chain: "arbitrum", protocol: "aave_v3", symbol: "USDC",
+      asset: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", ts: Date.now()/1000 - 40,
+      block_number: 190012345, supply_usd: 3.2e8, borrow_usd: 2.8e8,
+      available_liquidity_usd: 4e7, utilization_pct: 87.5, price_usd: 0.9998 },
+    { pool_key: "ethereum:compound_v3:USDC", chain: "ethereum", protocol: "compound_v3", symbol: "USDC",
+      asset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", ts: Date.now()/1000 - 35,
+      block_number: 24942871, supply_usd: 7.8e8, borrow_usd: 5.6e8,
+      available_liquidity_usd: 2.2e8, utilization_pct: 71.8, price_usd: 0.9999 }
+  ];
+}
+
+function _mockOverview(pk) {
+  const p = _mockPools().find(x => x.pool_key === pk);
+  if (!p) return { ok: false, error: "pool not found" };
+  return { ok: true, pool: { ...p, chain_zh: _chainZh(p.chain), protocol_zh: _protocolZh(p.protocol) } };
+}
+
+function _mockHistory(pk, hours) {
+  const pool = _mockPools().find(x => x.pool_key === pk);
+  if (!pool) return { ok: false, error: "pool not found" };
+  const now = Date.now() / 1000;
+  const n = 100;
+  const dt = hours * 3600 / n;
+  const series = [];
+  for (let i = 0; i < n; i++) {
+    const ts = now - (n - i) * dt;
+    const noise = (Math.sin(i * 0.3) + Math.cos(i * 0.17)) * 0.03;
+    series.push({
+      ts,
+      supply_usd: pool.supply_usd * (1 + noise),
+      borrow_usd: pool.borrow_usd * (1 + noise * 0.8),
+      available_liquidity_usd: pool.available_liquidity_usd * (1 + noise * 1.5),
+      utilization_pct: Math.max(0, Math.min(100, pool.utilization_pct + noise * 20)),
+      price_usd: pool.price_usd
+    });
+  }
+  return { ok: true, pool_key: pk, hours, series };
+}
+
+function _mockActivity(pk, hours, minUsd) {
+  const types = [
+    { event: "Supply", event_zh: "存款" },
+    { event: "Withdraw", event_zh: "提款" },
+    { event: "Borrow", event_zh: "借款" },
+    { event: "Repay", event_zh: "还款" },
+    { event: "LiquidationCall", event_zh: "清算" }
+  ];
+  const now = Date.now() / 1000;
+  const events = [];
+  for (let i = 0; i < 25; i++) {
+    const t = types[Math.floor(Math.random() * types.length)];
+    const amount = minUsd + Math.random() * minUsd * 50;
+    events.push({
+      ts: now - Math.random() * hours * 3600,
+      block: 24942000 + i,
+      tx_hash: "0x" + Array.from({length: 64}, () => Math.floor(Math.random() * 16).toString(16)).join(""),
+      event: t.event,
+      event_zh: t.event_zh,
+      user: "0x" + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join(""),
+      on_behalf_of: "0x" + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join(""),
+      amount_token: amount / (Math.random() > 0.5 ? 1 : 3200),
+      amount_usd: amount
+    });
+  }
+  events.sort((a, b) => b.ts - a.ts);
+  return { ok: true, pool_key: pk, hours, min_usd: minUsd, cached_at: now, events };
+}
+
+function _mockHolders(pk, hours) {
+  const top = [];
+  for (let i = 0; i < 20; i++) {
+    const supply = Math.random() * 2e7;
+    const withdraw = Math.random() * 1e7;
+    const addr = "0x" + Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join("");
+    top.push({
+      rank: i + 1,
+      address: addr,
+      address_short: addr.slice(0, 6) + "..." + addr.slice(-4),
+      net_usd: supply - withdraw,
+      supply_usd: supply,
+      withdraw_usd: withdraw,
+      tx_count: 1 + Math.floor(Math.random() * 15),
+      tag: Math.random() > 0.85 ? "Binance 14" : null
+    });
+  }
+  top.sort((a, b) => b.net_usd - a.net_usd);
+  top.forEach((t, i) => { t.rank = i + 1; });
+  return { ok: true, pool_key: pk, method: "net_flow", hours, cached_at: Date.now()/1000, top };
+}
+
+function _mockAlerts(pk) {
+  const rules = ["utilization_95pct", "tvl_drop_5min", "borrow_spike", "liquidity_drain"];
+  const levels = ["info", "warning", "alert", "critical"];
+  const levelZh = { info: "信息", warning: "警告", alert: "告警", critical: "严重" };
+  const now = Date.now() / 1000;
+  const alerts = [];
+  for (let i = 0; i < 8; i++) {
+    const lvl = levels[Math.floor(Math.random() * levels.length)];
+    const rule = rules[Math.floor(Math.random() * rules.length)];
+    alerts.push({
+      ts: now - i * 3600 - Math.random() * 1800,
+      level: lvl,
+      level_zh: levelZh[lvl],
+      rule,
+      message: `池子 ${pk} 触发 ${rule}:当前利用率 98.6%,5m 前为 95.3%`,
+      metrics: { utilization_pct: 98.6, supply_usd: 1.79e9, borrow_usd: 1.76e9 }
+    });
+  }
+  return { ok: true, pool_key: pk, alerts };
+}
+
+function _mockPermissions(proto, chain, hours) {
+  return { ok: true, protocol: proto, chain, hours, events: [] };
+}
+
+function _mockRecentAlerts(limit) {
+  const pools = _mockPools();
+  const levels = ["info", "warning", "alert", "critical"];
+  const levelZh = { info: "信息", warning: "警告", alert: "告警", critical: "严重" };
+  const rules = ["utilization_95pct", "tvl_drop_5min", "borrow_spike"];
+  const now = Date.now() / 1000;
+  const out = [];
+  for (let i = 0; i < limit; i++) {
+    const p = pools[Math.floor(Math.random() * pools.length)];
+    const lvl = levels[Math.floor(Math.random() * levels.length)];
+    out.push({
+      ts: now - i * 600 - Math.random() * 300,
+      level: lvl,
+      level_zh: levelZh[lvl],
+      rule: rules[Math.floor(Math.random() * rules.length)],
+      pool_key: p.pool_key, chain: p.chain, protocol: p.protocol, symbol: p.symbol,
+      message: `${p.symbol} 池利用率异常:98.3%`
+    });
+  }
+  return { ok: true, alerts: out };
+}
+
+function _mockStatus() {
+  return {
+    ok: true,
+    server_started_at: Date.now()/1000 - 1200,
+    uptime_sec: 1200,
+    monitor_running: true,
+    monitor_pid: 12345,
+    db: { snapshots: 128 + Math.floor(Math.random()*5), alerts: 12, path: "data/snapshots.db" },
+    chains_configured: ["ethereum", "arbitrum"],
+    protocols_configured: ["aave_v3", "compound_v3"]
+  };
+}
+
+function mockFetch(url) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const u = new URL(url, location.origin);
+      const p = u.pathname;
+      const q = u.searchParams;
+      let data;
+      if (p === "/api/status") data = _mockStatus();
+      else if (p === "/api/pools") data = { ok: true, pools: _mockPools() };
+      else if (p === "/api/alerts/recent") data = _mockRecentAlerts(parseInt(q.get("limit") || "10"));
+      else if (p === "/api/permissions") data = _mockPermissions(q.get("protocol"), q.get("chain"), parseInt(q.get("hours") || "24"));
+      else {
+        const mOv = p.match(/^\/api\/pools\/(.+)\/overview$/);
+        const mHi = p.match(/^\/api\/pools\/(.+)\/history$/);
+        const mAc = p.match(/^\/api\/pools\/(.+)\/activity$/);
+        const mHo = p.match(/^\/api\/pools\/(.+)\/holders$/);
+        const mAl = p.match(/^\/api\/pools\/(.+)\/alerts$/);
+        if (mOv) data = _mockOverview(decodeURIComponent(mOv[1]));
+        else if (mHi) data = _mockHistory(decodeURIComponent(mHi[1]), parseInt(q.get("hours") || "24"));
+        else if (mAc) data = _mockActivity(decodeURIComponent(mAc[1]), parseInt(q.get("hours") || "1"), parseFloat(q.get("min_usd") || "100000"));
+        else if (mHo) data = _mockHolders(decodeURIComponent(mHo[1]), parseInt(q.get("hours") || "24"));
+        else if (mAl) data = _mockAlerts(decodeURIComponent(mAl[1]));
+        else data = { ok: false, error: "unknown mock endpoint: " + p };
+      }
+      resolve({ ok: true, status: 200, json: () => Promise.resolve(data) });
+    }, 80 + Math.random() * 120);
+  });
+}
+
+if (MOCK) { window.fetch = mockFetch; console.log("[mock mode] fetch replaced"); }
+
+/* =========================================================
+   i18n maps
+   ========================================================= */
+const CHAIN_ZH = {
+  ethereum: "以太坊", arbitrum: "Arbitrum", optimism: "Optimism",
+  base: "Base", polygon: "Polygon", avalanche: "Avalanche",
+  bnb: "BNB Chain", gnosis: "Gnosis", katana: "Katana"
+};
+const PROTOCOL_ZH = {
+  aave_v3: "Aave v3", compound_v3: "Compound v3", morpho_blue: "Morpho Blue",
+  spark: "Spark", venus: "Venus", radiant: "Radiant"
+};
+const EXPLORER_TX = {
+  ethereum: "https://etherscan.io/tx/", arbitrum: "https://arbiscan.io/tx/",
+  optimism: "https://optimistic.etherscan.io/tx/", base: "https://basescan.org/tx/",
+  polygon: "https://polygonscan.com/tx/", avalanche: "https://snowtrace.io/tx/",
+  bnb: "https://bscscan.com/tx/", gnosis: "https://gnosisscan.io/tx/"
+};
+const EXPLORER_ADDR = {
+  ethereum: "https://etherscan.io/address/", arbitrum: "https://arbiscan.io/address/",
+  optimism: "https://optimistic.etherscan.io/address/", base: "https://basescan.org/address/",
+  polygon: "https://polygonscan.com/address/", avalanche: "https://snowtrace.io/address/",
+  bnb: "https://bscscan.com/address/", gnosis: "https://gnosisscan.io/address/"
+};
+function _chainZh(c) { return CHAIN_ZH[c] || c; }
+function _protocolZh(p) { return PROTOCOL_ZH[p] || p; }
+function explorerTxUrl(chain, hash) {
+  return (EXPLORER_TX[chain] || "https://etherscan.io/tx/") + hash;
+}
+function explorerAddrUrl(chain, addr) {
+  return (EXPLORER_ADDR[chain] || "https://etherscan.io/address/") + addr;
+}
+
+const EVENT_ICON = {
+  Supply: "📥", Withdraw: "📤", Borrow: "💳", Repay: "💰", LiquidationCall: "⚠️"
+};
+
+/* =========================================================
+   Formatting
+   ========================================================= */
+function fmtUSD(v) {
+  if (v == null || isNaN(v)) return "N/A";
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1e9) return sign + "$" + (abs/1e9).toFixed(2) + "B";
+  if (abs >= 1e6) return sign + "$" + (abs/1e6).toFixed(2) + "M";
+  if (abs >= 1e3) return sign + "$" + (abs/1e3).toFixed(2) + "K";
+  return sign + "$" + abs.toFixed(2);
+}
+function fmtPct(v) {
+  if (v == null || isNaN(v)) return "N/A";
+  return v.toFixed(2) + "%";
+}
+function fmtNum(v, dec=4) {
+  if (v == null || isNaN(v)) return "N/A";
+  if (v === 0) return "0";
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return v.toExponential(2);
+  if (abs >= 1) return v.toFixed(2);
+  return v.toFixed(dec);
+}
+function fmtAddr(addr) {
+  if (!addr) return "";
+  return addr.slice(0, 6) + "..." + addr.slice(-4);
+}
+function fmtRelTime(ts) {
+  if (!ts) return "";
+  const diff = Date.now()/1000 - ts;
+  if (diff < 60) return Math.floor(diff) + " 秒前";
+  if (diff < 3600) return Math.floor(diff/60) + " 分钟前";
+  if (diff < 86400) return Math.floor(diff/3600) + " 小时前";
+  return Math.floor(diff/86400) + " 天前";
+}
+function fmtAbsTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/* =========================================================
+   API wrapper
+   ========================================================= */
+async function api(path) {
+  try {
+    const r = await fetch(path);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      return { ok: false, error: body.error || ("HTTP " + r.status) };
+    }
+    return await r.json();
+  } catch (e) {
+    console.error("[api]", path, e);
+    return { ok: false, error: e.message || "network error" };
+  }
+}
+
+/* =========================================================
+   Global state
+   ========================================================= */
+const state = {
+  pools: [],
+  tree: {},          // { protocol: { chain: [pool, ...] } }
+  currentPoolKey: null,
+  currentTab: "overview",
+  chartInstance: null,
+  trendHours: 24,
+  activityHours: 1,
+  activityMinUsd: 100000,
+  holdersHours: 24,
+  collapsed: {}      // { "protocol": true, "protocol:chain": true }
+};
+
+/* =========================================================
+   Status bar
+   ========================================================= */
+async function refreshStatus() {
+  const s = await api("/api/status");
+  const stMon = document.getElementById("st-monitor");
+  const stDb  = document.getElementById("st-db");
+  const stRpc = document.getElementById("st-rpc");
+  if (!s.ok) {
+    stMon.textContent = "⭕ 状态接口异常";
+    stMon.className = "item monitor-down";
+    return;
+  }
+  if (s.monitor_running) {
+    stMon.innerHTML = `🟢 <span class="monitor-up">监控运行中</span> (PID ${s.monitor_pid})`;
+    stMon.className = "item";
+  } else {
+    stMon.innerHTML = `⭕ <span class="monitor-down">监控未运行</span> · 先跑 <span class="mono">./w3risk start</span>`;
+    stMon.className = "item";
+  }
+  const db = s.db || {};
+  stDb.textContent = `💾 快照 ${db.snapshots ?? "?"} / 告警 ${db.alerts ?? "?"}`;
+  // RPC 节点健康暂无接口数据,占位
+  const chains = (s.chains_configured || []).length;
+  stRpc.textContent = `📡 ${chains} 链已配置`;
+}
+
+/* =========================================================
+   Pool tree
+   ========================================================= */
+async function loadPools() {
+  const r = await api("/api/pools");
+  const tree = {};
+  if (!r.ok) {
+    document.getElementById("tree-root").innerHTML =
+      `<div class="error">加载池子失败: ${r.error}</div>`;
+    return;
+  }
+  state.pools = r.pools || [];
+  for (const p of state.pools) {
+    if (!tree[p.protocol]) tree[p.protocol] = {};
+    if (!tree[p.protocol][p.chain]) tree[p.protocol][p.chain] = [];
+    tree[p.protocol][p.chain].push(p);
+  }
+  state.tree = tree;
+  renderTree();
+}
+
+function renderTree(filter="") {
+  const root = document.getElementById("tree-root");
+  const protos = Object.keys(state.tree).sort();
+  if (protos.length === 0) {
+    root.innerHTML = `<div class="empty">暂无池子数据</div>`;
+    return;
+  }
+  const f = filter.trim().toLowerCase();
+  const frag = document.createDocumentFragment();
+  for (const proto of protos) {
+    const chains = Object.keys(state.tree[proto]).sort();
+    const protoEl = document.createElement("div");
+    const pCollapsed = state.collapsed[proto] === true;
+    // prefilter chains/pools under filter
+    const chainEls = [];
+    for (const chain of chains) {
+      const pools = state.tree[proto][chain]
+        .filter(pl => !f || pl.symbol.toLowerCase().includes(f) || pl.pool_key.toLowerCase().includes(f))
+        .sort((a,b) => (b.supply_usd || 0) - (a.supply_usd || 0));
+      if (pools.length === 0) continue;
+      const cKey = proto + ":" + chain;
+      const cCollapsed = state.collapsed[cKey] === true;
+      const chainWrap = document.createElement("div");
+      chainWrap.className = "tree-node chain";
+      chainWrap.innerHTML = `<span class="tree-arrow">${cCollapsed ? "▸" : "▾"}</span> ${_chainZh(chain)}`;
+      chainWrap.onclick = (e) => {
+        e.stopPropagation();
+        state.collapsed[cKey] = !cCollapsed;
+        renderTree(document.getElementById("tree-search").value);
+      };
+      chainEls.push(chainWrap);
+      if (!cCollapsed) {
+        for (const pl of pools) {
+          const poolEl = document.createElement("div");
+          poolEl.className = "tree-node pool" + (state.currentPoolKey === pl.pool_key ? " active" : "");
+          poolEl.innerHTML = `<span>• ${pl.symbol}</span><span class="pool-tvl">${fmtUSD(pl.supply_usd)}</span>`;
+          poolEl.onclick = (e) => { e.stopPropagation(); selectPool(pl.pool_key); };
+          chainEls.push(poolEl);
+        }
+      }
+    }
+    if (chainEls.length === 0 && f) continue;
+    const protoHeader = document.createElement("div");
+    protoHeader.className = "tree-node protocol";
+    protoHeader.innerHTML = `<span class="tree-arrow">${pCollapsed ? "▸" : "▾"}</span> ${_protocolZh(proto)}`;
+    protoHeader.onclick = () => {
+      state.collapsed[proto] = !pCollapsed;
+      renderTree(document.getElementById("tree-search").value);
+    };
+    frag.appendChild(protoHeader);
+    if (!pCollapsed) chainEls.forEach(el => frag.appendChild(el));
+  }
+  root.innerHTML = "";
+  root.appendChild(frag);
+}
+
+document.getElementById("tree-search").addEventListener("input", (e) => {
+  renderTree(e.target.value);
+});
+
+/* =========================================================
+   Breadcrumb & routing
+   ========================================================= */
+function renderBreadcrumb() {
+  const bc = document.getElementById("breadcrumb");
+  if (!state.currentPoolKey) {
+    bc.innerHTML = "未选择池子";
+    return;
+  }
+  const p = state.pools.find(x => x.pool_key === state.currentPoolKey);
+  if (!p) {
+    bc.textContent = state.currentPoolKey;
+    return;
+  }
+  bc.innerHTML = `${_protocolZh(p.protocol)}<span class="sep">·</span>${_chainZh(p.chain)}<span class="sep">·</span><span class="current">${p.symbol}</span>`;
+}
+
+function parseHash() {
+  // #/pool/ethereum:aave_v3:USDC/activity
+  const h = location.hash.slice(1);
+  const parts = h.split("/").filter(Boolean);
+  if (parts[0] === "pool" && parts[1]) {
+    return { poolKey: decodeURIComponent(parts[1]), tab: parts[2] || "overview" };
+  }
+  return null;
+}
+function setHash(poolKey, tab) {
+  const newHash = `#/pool/${encodeURIComponent(poolKey)}/${tab}`;
+  if (location.hash !== newHash) location.hash = newHash;
+}
+window.addEventListener("hashchange", () => {
+  const r = parseHash();
+  if (r) {
+    const changed = r.poolKey !== state.currentPoolKey || r.tab !== state.currentTab;
+    state.currentPoolKey = r.poolKey;
+    state.currentTab = r.tab;
+    if (changed) {
+      syncTabUi();
+      renderTree(document.getElementById("tree-search").value);
+      renderBreadcrumb();
+      renderTab();
+    }
+  }
+});
+
+/* =========================================================
+   Tab system
+   ========================================================= */
+document.querySelectorAll(".tab").forEach(el => {
+  el.addEventListener("click", () => {
+    const t = el.dataset.tab;
+    state.currentTab = t;
+    syncTabUi();
+    if (state.currentPoolKey) setHash(state.currentPoolKey, t);
+    renderTab();
+  });
+});
+
+function syncTabUi() {
+  document.querySelectorAll(".tab").forEach(el => {
+    el.classList.toggle("active", el.dataset.tab === state.currentTab);
+  });
+}
+
+function selectPool(pk) {
+  state.currentPoolKey = pk;
+  setHash(pk, state.currentTab);
+  renderBreadcrumb();
+  renderTree(document.getElementById("tree-search").value);
+  renderTab();
+}
+
+/* =========================================================
+   Tab rendering dispatcher
+   ========================================================= */
+function destroyChart() {
+  if (state.chartInstance) {
+    try { state.chartInstance.destroy(); } catch (e) {}
+    state.chartInstance = null;
+  }
+}
+
+async function renderTab() {
+  destroyChart();
+  const box = document.getElementById("tab-content");
+  if (!state.currentPoolKey) {
+    box.innerHTML = `<div class="empty">请从左侧选择一个池子开始查看</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="loading">加载中…</div>`;
+  const pk = state.currentPoolKey;
+  try {
+    if (state.currentTab === "overview")       await renderOverview(box, pk);
+    else if (state.currentTab === "trend")     await renderTrend(box, pk);
+    else if (state.currentTab === "activity")  await renderActivity(box, pk);
+    else if (state.currentTab === "holders")   await renderHolders(box, pk);
+    else if (state.currentTab === "permissions") await renderPermissions(box, pk);
+    else if (state.currentTab === "alerts")    await renderAlerts(box, pk);
+  } catch (e) {
+    console.error(e);
+    box.innerHTML = `<div class="error">数据加载失败，请稍后重试: ${e.message}</div>`;
+  }
+}
+
+/* =========================================================
+   Tab 1: Overview
+   ========================================================= */
+async function renderOverview(box, pk) {
+  const r = await api(`/api/pools/${encodeURIComponent(pk)}/overview`);
+  if (!r.ok) {
+    box.innerHTML = `<div class="error">数据加载失败: ${r.error}</div>`;
+    return;
+  }
+  const p = r.pool;
+  box.innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="kpi-label">总存款 (Supply USD)</div><div class="kpi-value">${fmtUSD(p.supply_usd)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">总借款 (Borrow USD)</div><div class="kpi-value">${fmtUSD(p.borrow_usd)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">利用率</div><div class="kpi-value">${fmtPct(p.utilization_pct)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">可用流动性</div><div class="kpi-value">${fmtUSD(p.available_liquidity_usd)}</div></div>
+    </div>
+    <div class="info-grid">
+      <div class="info-item"><span class="k">当前价格</span><span class="v">$${fmtNum(p.price_usd, 6)}</span></div>
+      <div class="info-item"><span class="k">区块高度</span><span class="v">${p.block_number?.toLocaleString?.() || p.block_number}</span></div>
+      <div class="info-item"><span class="k">最近更新</span><span class="v" title="${fmtAbsTime(p.ts)}">${fmtRelTime(p.ts)}</span></div>
+      <div class="info-item"><span class="k">协议 / 链</span><span class="v">${p.protocol_zh || _protocolZh(p.protocol)} · ${p.chain_zh || _chainZh(p.chain)}</span></div>
+      <div class="info-item" style="grid-column: 1 / -1">
+        <span class="k">资产合约</span>
+        <span class="v">
+          <a href="${explorerAddrUrl(p.chain, p.asset)}" target="_blank">${p.asset}</a>
+          <button class="copy-btn" onclick="copyToClip('${p.asset}', this)">复制</button>
+        </span>
+      </div>
+    </div>
+  `;
+}
+
+window.copyToClip = function(txt, btn) {
+  navigator.clipboard?.writeText(txt).then(() => {
+    const old = btn.textContent;
+    btn.textContent = "已复制";
+    setTimeout(() => btn.textContent = old, 1200);
+  }).catch(() => {});
+};
+
+/* =========================================================
+   Tab 2: Trend
+   ========================================================= */
+async function renderTrend(box, pk) {
+  const hours = state.trendHours;
+  box.innerHTML = `
+    <div class="toolbar">
+      <div class="range-switcher" id="trend-range">
+        ${[1,6,24,168].map(h => {
+          const lbl = h===168 ? "7d" : (h+"h");
+          return `<button data-h="${h}" class="${h===hours?'active':''}">${lbl}</button>`;
+        }).join("")}
+      </div>
+      <span style="font-size:12px;color:#64748b">左轴: 美元金额 · 右轴: 利用率 %</span>
+    </div>
+    <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
+  `;
+  document.querySelectorAll("#trend-range button").forEach(b => {
+    b.onclick = () => {
+      state.trendHours = parseInt(b.dataset.h);
+      renderTrend(box, pk);
+    };
+  });
+  const r = await api(`/api/pools/${encodeURIComponent(pk)}/history?hours=${hours}`);
+  if (!r.ok) {
+    box.querySelector(".chart-wrap").innerHTML = `<div class="error">数据加载失败: ${r.error}</div>`;
+    return;
+  }
+  const s = r.series || [];
+  if (s.length === 0) {
+    box.querySelector(".chart-wrap").innerHTML = `<div class="empty">暂无数据</div>`;
+    return;
+  }
+  const labels = s.map(x => new Date(x.ts * 1000));
+  const supply = s.map(x => x.supply_usd);
+  const borrow = s.map(x => x.borrow_usd);
+  const avail  = s.map(x => x.available_liquidity_usd);
+  const util   = s.map(x => x.utilization_pct);
+
+  const ctx = document.getElementById("trend-chart").getContext("2d");
+  destroyChart();
+  state.chartInstance = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Supply USD", data: supply, yAxisID: "y", borderColor: "#22d3ee", backgroundColor: "rgba(34,211,238,0.1)", borderWidth: 1.5, tension: 0.2, pointRadius: 0 },
+        { label: "Borrow USD", data: borrow, yAxisID: "y", borderColor: "#fb923c", backgroundColor: "rgba(251,146,60,0.1)", borderWidth: 1.5, tension: 0.2, pointRadius: 0 },
+        { label: "Liquidity USD", data: avail, yAxisID: "y", borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,0.1)", borderWidth: 1.5, tension: 0.2, pointRadius: 0 },
+        { label: "利用率 %", data: util, yAxisID: "y1", borderColor: "#facc15", borderWidth: 1.5, borderDash: [4,4], tension: 0.2, pointRadius: 0 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#e2e8f0", font: { size: 11 }, usePointStyle: true } },
+        tooltip: {
+          backgroundColor: "#0b1220", titleColor: "#22d3ee", bodyColor: "#e2e8f0",
+          borderColor: "#1e293b", borderWidth: 1,
+          callbacks: {
+            label: (c) => {
+              const lbl = c.dataset.label || "";
+              if (lbl.includes("%")) return `${lbl}: ${c.parsed.y?.toFixed(2)}%`;
+              return `${lbl}: ${fmtUSD(c.parsed.y)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "time", time: { unit: hours <= 6 ? "minute" : (hours <= 24 ? "hour" : "day") },
+          ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "#1e293b" }
+        },
+        y: {
+          position: "left", ticks: { color: "#64748b", callback: (v) => fmtUSD(v) }, grid: { color: "#1e293b" }
+        },
+        y1: {
+          position: "right", min: 0, max: 100,
+          ticks: { color: "#facc15", callback: (v) => v + "%" }, grid: { drawOnChartArea: false }
+        }
+      }
+    }
+  });
+}
+
+/* =========================================================
+   Tab 3: Activity
+   ========================================================= */
+async function renderActivity(box, pk) {
+  const pool = state.pools.find(x => x.pool_key === pk);
+  const chain = pool?.chain || "ethereum";
+  const hours = state.activityHours;
+  const minUsd = state.activityMinUsd;
+  box.innerHTML = `
+    <div class="toolbar">
+      <div class="range-switcher" id="act-range">
+        ${[1,6,24].map(h => `<button data-h="${h}" class="${h===hours?'active':''}">${h}h</button>`).join("")}
+      </div>
+      <label class="threshold-input">最小金额 (USD)
+        <input type="number" id="act-min" value="${minUsd}" min="0" step="10000">
+      </label>
+      <span style="font-size:12px;color:#64748b;margin-left:auto" id="act-meta"></span>
+    </div>
+    <div id="act-body"><div class="loading">加载中…</div></div>
+  `;
+  document.querySelectorAll("#act-range button").forEach(b => {
+    b.onclick = () => { state.activityHours = parseInt(b.dataset.h); renderActivity(box, pk); };
+  });
+  let timer;
+  document.getElementById("act-min").addEventListener("input", (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const v = parseFloat(e.target.value);
+      if (!isNaN(v) && v >= 0) { state.activityMinUsd = v; renderActivity(box, pk); }
+    }, 600);
+  });
+
+  const r = await api(`/api/pools/${encodeURIComponent(pk)}/activity?hours=${hours}&min_usd=${minUsd}`);
+  const body = document.getElementById("act-body");
+  if (!r.ok) {
+    body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
+    return;
+  }
+  const events = r.events || [];
+  if (r.cached_at) {
+    document.getElementById("act-meta").textContent = `缓存于 ${fmtRelTime(r.cached_at)} · 共 ${events.length} 条`;
+  }
+  if (events.length === 0) {
+    body.innerHTML = `<div class="empty">暂无数据 (时间 ${hours}h · 阈值 ${fmtUSD(minUsd)})</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <table class="data-table">
+      <thead><tr>
+        <th>时间</th><th>事件</th><th>用户</th>
+        <th class="num">金额 (USD)</th><th class="num">代币数量</th>
+        <th class="num">区块</th><th>TX Hash</th>
+      </tr></thead>
+      <tbody>
+      ${events.map(e => {
+        const rowClass = "evt-" + e.event.toLowerCase();
+        const icon = EVENT_ICON[e.event] || "•";
+        return `<tr class="${rowClass}">
+          <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
+          <td>${icon} ${e.event_zh || e.event}</td>
+          <td><a class="addr" href="${explorerAddrUrl(chain, e.user)}" target="_blank" title="${e.user}">${fmtAddr(e.user)}</a></td>
+          <td class="num">${fmtUSD(e.amount_usd)}</td>
+          <td class="num">${fmtNum(e.amount_token, 4)}</td>
+          <td class="num">${e.block?.toLocaleString?.() ?? e.block}</td>
+          <td><a class="addr" href="${explorerTxUrl(chain, e.tx_hash)}" target="_blank" title="${e.tx_hash}">${fmtAddr(e.tx_hash)}</a></td>
+        </tr>`;
+      }).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+/* =========================================================
+   Tab 4: Holders (Top 20 net flow)
+   ========================================================= */
+async function renderHolders(box, pk) {
+  const pool = state.pools.find(x => x.pool_key === pk);
+  const chain = pool?.chain || "ethereum";
+  const hours = state.holdersHours;
+  box.innerHTML = `
+    <div class="toolbar">
+      <div class="range-switcher" id="holders-range">
+        ${[6,24,168].map(h => {
+          const lbl = h===168?"7d":(h+"h");
+          return `<button data-h="${h}" class="${h===hours?'active':''}">${lbl}</button>`;
+        }).join("")}
+      </div>
+    </div>
+    <div class="tab-description">按最近 ${hours===168?"7 天":hours+" 小时"} Supply - Withdraw 净流入排名（正=净流入，负=净流出）</div>
+    <div id="holders-body"><div class="loading">加载中…</div></div>
+  `;
+  document.querySelectorAll("#holders-range button").forEach(b => {
+    b.onclick = () => { state.holdersHours = parseInt(b.dataset.h); renderHolders(box, pk); };
+  });
+  const r = await api(`/api/pools/${encodeURIComponent(pk)}/holders?hours=${hours}`);
+  const body = document.getElementById("holders-body");
+  if (!r.ok) {
+    body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
+    return;
+  }
+  const top = r.top || [];
+  if (top.length === 0) {
+    body.innerHTML = `<div class="empty">暂无数据 (${hours}h 窗口内无活动)</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <table class="data-table">
+      <thead><tr>
+        <th>#</th><th>地址</th>
+        <th class="num">净流入 USD</th><th class="num">存款 USD</th>
+        <th class="num">提款 USD</th><th class="num">交易数</th>
+      </tr></thead>
+      <tbody>
+      ${top.map(t => `
+        <tr>
+          <td>${t.rank}</td>
+          <td><a class="addr" href="${explorerAddrUrl(chain, t.address)}" target="_blank" title="${t.address}">${t.address_short || fmtAddr(t.address)}</a>${t.tag?`<span style="margin-left:6px;font-size:10px;color:#22d3ee">[${t.tag}]</span>`:""}</td>
+          <td class="num ${t.net_usd >= 0 ? 'net-positive' : 'net-negative'}">${t.net_usd>=0?"+":""}${fmtUSD(t.net_usd)}</td>
+          <td class="num">${fmtUSD(t.supply_usd)}</td>
+          <td class="num">${fmtUSD(t.withdraw_usd)}</td>
+          <td class="num">${t.tx_count}</td>
+        </tr>
+      `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+/* =========================================================
+   Tab 5: Permissions
+   ========================================================= */
+async function renderPermissions(box, pk) {
+  const pool = state.pools.find(x => x.pool_key === pk);
+  if (!pool) {
+    box.innerHTML = `<div class="error">未找到池子信息</div>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="tab-description">协议级别权限事件（针对 ${_protocolZh(pool.protocol)} / ${_chainZh(pool.chain)}，而非单个池子），近 24 小时</div>
+    <div id="perm-body"><div class="loading">加载中…</div></div>
+  `;
+  const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=24`);
+  const body = document.getElementById("perm-body");
+  if (!r.ok) {
+    body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
+    return;
+  }
+  const events = r.events || [];
+  if (events.length === 0) {
+    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 24 小时无权限变更（正常）</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <table class="data-table">
+      <thead><tr>
+        <th>时间</th><th>合约</th><th>事件</th>
+        <th>含义</th><th>旧值 → 新值</th><th>TX</th>
+      </tr></thead>
+      <tbody>
+      ${events.map(e => `
+        <tr>
+          <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
+          <td>
+            <a class="addr" href="${explorerAddrUrl(pool.chain, e.contract)}" target="_blank" title="${e.contract}">${fmtAddr(e.contract)}</a>
+            ${e.contract_role ? `<div style="font-size:10px;color:#64748b">${e.contract_role}</div>` : ""}
+          </td>
+          <td style="color:#fb923c">${e.event}</td>
+          <td>${e.description_zh || ""}</td>
+          <td class="mono" style="font-size:11px">
+            ${e.old_value ? `<span style="color:#64748b">${fmtAddr(e.old_value)}</span> → ` : ""}
+            <span style="color:#facc15">${e.new_value ? fmtAddr(e.new_value) : ""}</span>
+          </td>
+          <td><a class="addr" href="${explorerTxUrl(pool.chain, e.tx_hash)}" target="_blank" title="${e.tx_hash}">${fmtAddr(e.tx_hash)}</a></td>
+        </tr>
+      `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+/* =========================================================
+   Tab 6: Alerts
+   ========================================================= */
+async function renderAlerts(box, pk) {
+  box.innerHTML = `<div id="alerts-body"><div class="loading">加载中…</div></div>`;
+  const r = await api(`/api/pools/${encodeURIComponent(pk)}/alerts?limit=50`);
+  const body = document.getElementById("alerts-body");
+  if (!r.ok) {
+    body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
+    return;
+  }
+  const alerts = r.alerts || [];
+  if (alerts.length === 0) {
+    body.innerHTML = `<div class="empty" style="color:#4ade80">✅ 无历史告警</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <table class="data-table alerts-table">
+      <thead><tr>
+        <th style="width:160px">时间</th>
+        <th style="width:80px">级别</th>
+        <th style="width:180px">规则</th>
+        <th>消息</th>
+        <th style="width:100px">操作</th>
+      </tr></thead>
+      <tbody id="alerts-tbody">
+      ${alerts.map((a, i) => `
+        <tr class="level-row-${a.level}">
+          <td title="${fmtAbsTime(a.ts)}">${fmtAbsTime(a.ts)}</td>
+          <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
+          <td class="mono" style="font-size:11px;color:#94a3b8">${a.rule || ""}</td>
+          <td>${a.message || ""}</td>
+          <td><button class="expand-btn" data-i="${i}">展开 metrics</button></td>
+        </tr>
+        <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${
+          JSON.stringify(a.metrics || {}, null, 2)
+        }</td></tr>
+      `).join("")}
+      </tbody>
+    </table>
+  `;
+  document.querySelectorAll(".expand-btn").forEach(b => {
+    b.onclick = () => {
+      const i = b.dataset.i;
+      const row = document.getElementById("metrics-" + i);
+      const open = row.style.display !== "none";
+      row.style.display = open ? "none" : "table-row";
+      b.textContent = open ? "展开 metrics" : "收起";
+    };
+  });
+}
+
+/* =========================================================
+   Bottom alert stream
+   ========================================================= */
+async function refreshAlertStream() {
+  const r = await api("/api/alerts/recent?limit=10");
+  const body = document.getElementById("alert-stream-body");
+  if (!r.ok) {
+    body.innerHTML = `<div class="error">加载告警失败: ${r.error}</div>`;
+    return;
+  }
+  const alerts = r.alerts || [];
+  if (alerts.length === 0) {
+    body.innerHTML = `<div class="empty" style="padding:16px;color:#4ade80">✅ 暂无最近告警</div>`;
+    return;
+  }
+  body.innerHTML = alerts.map(a => `
+    <div class="alert-row level-row-${a.level}" data-pk="${a.pool_key || ""}">
+      <span class="ts">${fmtAbsTime(a.ts)}</span>
+      <span class="level-tag level-${a.level}">${a.level_zh || a.level}</span>
+      <span class="pool mono">${a.pool_key || ""}</span>
+      <span class="msg">${a.message || ""}</span>
+    </div>
+  `).join("");
+  body.querySelectorAll(".alert-row").forEach(row => {
+    row.onclick = () => {
+      const pk = row.dataset.pk;
+      if (!pk) return;
+      state.currentPoolKey = pk;
+      state.currentTab = "alerts";
+      syncTabUi();
+      setHash(pk, "alerts");
+      renderBreadcrumb();
+      renderTree(document.getElementById("tree-search").value);
+      renderTab();
+    };
+  });
+}
+
+/* =========================================================
+   Boot
+   ========================================================= */
+async function boot() {
+  const r = parseHash();
+  if (r) {
+    state.currentPoolKey = r.poolKey;
+    state.currentTab = r.tab;
+    syncTabUi();
+  }
+  await Promise.all([refreshStatus(), loadPools(), refreshAlertStream()]);
+  renderBreadcrumb();
+  renderTree();
+  renderTab();
+  setInterval(refreshStatus, 5000);
+  setInterval(refreshAlertStream, 30000);
+}
+
+document.addEventListener("DOMContentLoaded", boot);
+</script>
+</body>
+</html>

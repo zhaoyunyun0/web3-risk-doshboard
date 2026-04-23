@@ -1,0 +1,275 @@
+#!/bin/bash
+# w3_risk_dashboard 一键 CLI
+# 用法见 ./w3risk help
+set -e
+
+cd "$(dirname "$0")"
+
+PID_FILE="data/w3risk.pid"
+WEB_PID_FILE="data/w3risk-web.pid"
+LOG_FILE="logs/w3risk.log"
+WEB_LOG_FILE="logs/w3risk-web.log"
+VENV_DIR=".venv"
+WEB_PORT="${WEB_PORT:-8787}"
+
+# ---------- helpers ----------
+ensure_venv() {
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "📦 创建 Python 虚拟环境 ($VENV_DIR)..."
+        python3 -m venv "$VENV_DIR"
+    fi
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+    if ! python -c "import web3, httpx, yaml, dotenv" 2>/dev/null; then
+        echo "📦 安装 Python 依赖..."
+        pip install -q -r requirements.txt
+    fi
+}
+
+ensure_env() {
+    if [ ! -f ".env" ]; then
+        if [ -f ".env.example" ]; then
+            cp .env.example .env
+            echo "⚠️  .env 从 .env.example 自动创建"
+            echo "   请编辑 .env 填入 LARK_WEBHOOK_URL,然后重新运行 ./w3risk start"
+            exit 1
+        fi
+        echo "❌ .env 和 .env.example 都不存在"
+        exit 1
+    fi
+    if ! grep -qE '^LARK_WEBHOOK_URL=.+hook/[^[:space:]]+' .env 2>/dev/null; then
+        echo "⚠️  .env 里 LARK_WEBHOOK_URL 未填有效值(告警将无法推送 Lark)"
+    fi
+}
+
+is_running() {
+    [ -f "$PID_FILE" ] || return 1
+    local pid
+    pid=$(cat "$PID_FILE")
+    [ -n "$pid" ] && ps -p "$pid" > /dev/null 2>&1
+}
+
+is_web_running() {
+    [ -f "$WEB_PID_FILE" ] || return 1
+    local pid
+    pid=$(cat "$WEB_PID_FILE")
+    [ -n "$pid" ] && ps -p "$pid" > /dev/null 2>&1
+}
+
+# ---------- commands ----------
+cmd_start() {
+    ensure_env
+    ensure_venv
+    mkdir -p data logs
+    if is_running; then
+        echo "✅ 已在运行 (PID $(cat "$PID_FILE"))"
+        return 0
+    fi
+    # 清理陈旧 pid 文件
+    rm -f "$PID_FILE"
+    # 完全脱离控制终端:stdin 来自 /dev/null,stdout/stderr 到 log,nohup + disown
+    nohup python -u -m src.main run </dev/null >> "$LOG_FILE" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+    disown "$pid" 2>/dev/null || true
+    sleep 1
+    if is_running; then
+        echo "🚀 已启动 (PID $pid)"
+        echo "📄 日志: $LOG_FILE"
+        echo "   实时查看: ./w3risk logs"
+    else
+        echo "❌ 启动失败,查看 $LOG_FILE 最后 20 行:"
+        tail -n 20 "$LOG_FILE" 2>/dev/null || true
+        exit 1
+    fi
+}
+
+cmd_stop() {
+    if ! is_running; then
+        echo "ℹ️  未在运行"
+        rm -f "$PID_FILE"
+        return 0
+    fi
+    local pid
+    pid=$(cat "$PID_FILE")
+    echo "⏹  停止 PID $pid (SIGTERM)..."
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        sleep 1
+        if ! ps -p "$pid" > /dev/null 2>&1; then
+            rm -f "$PID_FILE"
+            echo "✅ 已停止"
+            return 0
+        fi
+    done
+    echo "⚠️  15 秒未退出,强制 SIGKILL..."
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo "✅ 已强制停止"
+}
+
+cmd_restart() {
+    cmd_stop
+    sleep 1
+    cmd_start
+}
+
+cmd_status() {
+    if is_running; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        echo "✅ 运行中 (PID $pid)"
+        echo ""
+        echo "最近 8 行日志:"
+        tail -n 8 "$LOG_FILE" 2>/dev/null || echo "(无日志)"
+    else
+        echo "⭕ 未运行"
+        if [ -f "$LOG_FILE" ]; then
+            echo ""
+            echo "日志文件: $LOG_FILE (最近 5 行)"
+            tail -n 5 "$LOG_FILE"
+        fi
+    fi
+}
+
+cmd_logs() {
+    if [ ! -f "$LOG_FILE" ]; then
+        echo "无日志文件"
+        exit 0
+    fi
+    local n="${1:-}"
+    if [ "$n" = "-f" ] || [ -z "$n" ]; then
+        tail -n 50 -f "$LOG_FILE"
+    else
+        tail -n "$n" "$LOG_FILE"
+    fi
+}
+
+cmd_cli() {
+    ensure_env
+    ensure_venv
+    mkdir -p data logs
+    exec python -u -m src.main "$@"
+}
+
+cmd_web_start() {
+    ensure_env
+    ensure_venv
+    mkdir -p data logs
+    if is_web_running; then
+        echo "✅ Web 已在运行 (PID $(cat "$WEB_PID_FILE")) — http://localhost:$WEB_PORT"
+        return 0
+    fi
+    rm -f "$WEB_PID_FILE"
+    nohup python -u -m src.main web --port "$WEB_PORT" </dev/null >> "$WEB_LOG_FILE" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$WEB_PID_FILE"
+    disown "$pid" 2>/dev/null || true
+    sleep 2
+    if is_web_running; then
+        echo "🌐 Web Dashboard 已启动 — http://localhost:$WEB_PORT (PID $pid)"
+        echo "📄 日志: $WEB_LOG_FILE"
+    else
+        echo "❌ Web 启动失败,查看 $WEB_LOG_FILE 最后 20 行:"
+        tail -n 20 "$WEB_LOG_FILE" 2>/dev/null || true
+        return 1
+    fi
+}
+
+cmd_web_stop() {
+    if ! is_web_running; then
+        echo "ℹ️  Web 未在运行"
+        rm -f "$WEB_PID_FILE"
+        return 0
+    fi
+    local pid
+    pid=$(cat "$WEB_PID_FILE")
+    echo "⏹  停止 Web PID $pid..."
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 1
+        if ! ps -p "$pid" > /dev/null 2>&1; then
+            rm -f "$WEB_PID_FILE"
+            echo "✅ Web 已停止"
+            return 0
+        fi
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$WEB_PID_FILE"
+    echo "✅ Web 已强制停止"
+}
+
+cmd_up() {
+    echo "─── 启动监控 ───"
+    cmd_start
+    echo ""
+    echo "─── 启动 Web Dashboard ───"
+    cmd_web_start
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "✨ 全部就绪:"
+    echo "   🛡  监控:      ./w3risk status"
+    echo "   🌐 Dashboard: http://localhost:$WEB_PORT"
+    echo "   🛑 关闭全部:  ./w3risk down"
+    echo "════════════════════════════════════════"
+}
+
+cmd_down() {
+    cmd_stop || true
+    cmd_web_stop || true
+}
+
+cmd_help() {
+    cat <<EOF
+w3_risk_dashboard 一键 CLI
+
+一键启停(监控 + Web 一起):
+  ./w3risk up               同时启动监控 + Web Dashboard
+  ./w3risk down             同时停止
+
+监控进程:
+  ./w3risk start            启动监控(后台)
+  ./w3risk stop             停止监控
+  ./w3risk restart          重启
+  ./w3risk status           查看状态
+  ./w3risk logs [-f|N]      查看日志
+
+Web Dashboard:
+  ./w3risk web              启动 Web(http://localhost:$WEB_PORT)
+  ./w3risk web-stop         停止 Web
+
+自检:
+  ./w3risk probe            RPC 节点健康检查
+  ./w3risk snapshot         采集一次打印(不推送)
+  ./w3risk test-lark        测 Lark 通道并发送样例卡片
+
+告警屏蔽(降噪):
+  ./w3risk mutes                                     列出当前屏蔽规则
+  ./w3risk mute <pool_key> [--rule X] [--duration 24h] [--reason "..."]
+  ./w3risk unmute <pool_key> [--rule X]
+
+示例:
+  # 一键全起
+  ./w3risk up
+  # 屏蔽 USDT 所有告警 24 小时
+  ./w3risk mute ethereum:aave_v3:USDT --duration 24h --reason "长期高利用率,非异常"
+EOF
+}
+
+# ---------- dispatch ----------
+case "${1:-help}" in
+    start)    cmd_start ;;
+    stop)     cmd_stop ;;
+    restart)  cmd_restart ;;
+    status)   cmd_status ;;
+    logs)     shift; cmd_logs "$@" ;;
+    web)      cmd_web_start ;;
+    web-stop) cmd_web_stop ;;
+    up)       cmd_up ;;
+    down)     cmd_down ;;
+    probe|snapshot|test-lark|mute|unmute|mutes)
+              cmd_cli "$@" ;;
+    help|--help|-h|"")
+              cmd_help ;;
+    *)        echo "❌ 未知命令: $1"; echo ""; cmd_help; exit 1 ;;
+esac

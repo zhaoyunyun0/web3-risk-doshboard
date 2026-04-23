@@ -1,0 +1,53 @@
+# Alert rule thresholds.
+# Rules compare current snapshot against a historical snapshot N seconds ago.
+
+tvl_drop:
+  # 在 time_window_sec 窗口内,TVL 跌幅超过 threshold_pct 触发
+  - name: "tvl_drop_5m_5pct"
+    level: "warning"
+    time_window_sec: 300
+    threshold_pct: 5.0
+  - name: "tvl_drop_5m_15pct"
+    level: "alert"
+    time_window_sec: 300
+    threshold_pct: 15.0
+  - name: "tvl_drop_1m_10pct"
+    level: "critical"
+    time_window_sec: 60
+    threshold_pct: 10.0
+
+utilization:
+  # 借用率超过阈值
+  - name: "utilization_95pct"
+    level: "alert"
+    threshold_pct: 95.0
+  - name: "utilization_99pct"
+    level: "critical"
+    threshold_pct: 99.0
+
+borrow_surge:
+  # 在 time_window_sec 内借款激增
+  - name: "borrow_surge_5m_20pct"
+    level: "warning"
+    time_window_sec: 300
+    threshold_pct: 20.0
+  - name: "borrow_surge_1m_10pct"
+    level: "alert"
+    time_window_sec: 60
+    threshold_pct: 10.0
+
+liquidity_drain:
+  # available liquidity (supply - borrow) 骤降
+  - name: "liquidity_drain_5m_30pct"
+    level: "alert"
+    time_window_sec: 300
+    threshold_pct: 30.0
+  - name: "liquidity_drain_1m_20pct"
+    level: "critical"
+    time_window_sec: 60
+    threshold_pct: 20.0
+
+# 可以通过 env ALERT_MIN_LEVEL 全局过滤
+# 默认去重:同一 (pool, rule) 对 5 分钟内不重复告警
+dedup:
+  window_sec: 300

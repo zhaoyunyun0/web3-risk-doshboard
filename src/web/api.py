@@ -1,0 +1,519 @@
+"""FastAPI backend for the w3_risk_dashboard Web UI.
+
+Contract: docs/WEB_API_CONTRACT.md — DO NOT drift from the field shapes there
+without also updating the doc.
+"""
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from ..config import AppConfig, load_config
+from ..lark_notifier import CHAIN_ZH, LEVEL_ZH, PROTOCOL_ZH
+from ..logger import log
+from ..mute_store import MuteStore, parse_duration
+from ..rpc_pool import RpcPool
+from ..sqlite_sink import SqliteSink
+from .cache import TTLCache
+from .on_demand import (
+    fetch_permission_events,
+    fetch_pool_activity,
+    fetch_top_holders_by_netflow,
+)
+from .resolver import AaveDeploymentResolver
+
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+PID_PATH = ROOT / "data" / "w3risk.pid"
+DB_PATH = ROOT / "data" / "snapshots.db"
+
+
+# ---------- state ----------
+class AppState:
+    def __init__(self):
+        self.cfg: AppConfig = load_config()
+        self.sink = SqliteSink(db_path=str(DB_PATH), retention_days=7)
+        self.mute_store = MuteStore()
+        self.rpc_pools: dict[str, RpcPool] = {}
+        for chain in self.cfg.enabled_chains:
+            if chain not in self.cfg.chains:
+                continue
+            self.rpc_pools[chain] = RpcPool(
+                chain, self.cfg.chains[chain], self.cfg.defaults
+            )
+        self.resolver = AaveDeploymentResolver(self.rpc_pools, self.cfg)
+        self.activity_cache = TTLCache(ttl_sec=30)
+        self.holders_cache = TTLCache(ttl_sec=300)
+        self.permissions_cache = TTLCache(ttl_sec=60)
+        self.server_started_at = time.time()
+
+    async def close(self) -> None:
+        for pool in self.rpc_pools.values():
+            try:
+                await pool.close()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("rpc pool close failed: %s", exc)
+        try:
+            self.sink.close()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("sink close failed: %s", exc)
+
+
+state: AppState | None = None
+
+
+app = FastAPI(title="w3_risk_dashboard", version="1.0.0")
+
+# CORS (loose for dev — frontend is served from same origin in prod)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    global state
+    state = AppState()
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    log.info(
+        "web api started (chains=%s protocols=%s)",
+        list(state.rpc_pools.keys()), state.cfg.enabled_protocols,
+    )
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    global state
+    if state is not None:
+        await state.close()
+        state = None
+
+
+# ---------- helpers ----------
+def _require_state() -> AppState:
+    if state is None:
+        raise HTTPException(status_code=503, detail="server not ready")
+    return state
+
+
+def _pool_row_to_obj(row: dict) -> dict:
+    return {
+        "pool_key": row["pool_key"],
+        "chain": row["chain"],
+        "protocol": row["protocol"],
+        "symbol": row["symbol"],
+        "asset": row["asset"],
+        "ts": float(row["ts"]),
+        "block_number": int(row["block_number"]),
+        "supply_usd": float(row.get("supply_usd") or 0.0),
+        "borrow_usd": float(row.get("borrow_usd") or 0.0),
+        "available_liquidity_usd": float(row.get("available_liquidity_usd") or 0.0),
+        "utilization_pct": float(row.get("utilization_pct") or 0.0),
+        "price_usd": float(row.get("price_usd") or 0.0),
+    }
+
+
+def _alert_row_to_obj(row: dict, *, include_pool_info: bool = False) -> dict:
+    out = {
+        "ts": float(row["ts"]),
+        "level": row["level"],
+        "level_zh": LEVEL_ZH.get(row["level"], row["level"]),
+        "rule": row["rule"],
+        "message": row.get("message") or "",
+        "metrics": row.get("metrics") or {},
+    }
+    if include_pool_info:
+        out["pool_key"] = row.get("pool_key")
+        out["chain"] = row.get("chain")
+        out["protocol"] = row.get("protocol")
+        out["symbol"] = row.get("symbol")
+    return out
+
+
+def _monitor_status() -> tuple[bool, int | None]:
+    if not PID_PATH.exists():
+        return False, None
+    try:
+        pid = int(PID_PATH.read_text().strip())
+    except (OSError, ValueError):
+        return False, None
+    try:
+        os.kill(pid, 0)  # signal 0 = existence check
+        return True, pid
+    except OSError:
+        return False, pid
+
+
+def _mute_to_obj(m) -> dict:
+    return {
+        "pool_key": m.pool_key,
+        "rule": m.rule,
+        "until": float(m.until) if m.until else None,
+        "human_until": m.human_until(),
+        "reason": m.reason or "",
+        "muted_at": float(m.muted_at),
+    }
+
+
+# ---------- static & index ----------
+@app.get("/")
+async def index() -> FileResponse:
+    idx = STATIC_DIR / "index.html"
+    if not idx.exists():
+        # placeholder for when the frontend isn't built yet
+        return JSONResponse(
+            {
+                "ok": True,
+                "message": "w3_risk_dashboard backend is running",
+                "static_dir": str(STATIC_DIR),
+                "frontend_present": False,
+            }
+        )
+    return FileResponse(str(idx))
+
+
+# Mount static after startup creates the dir (safe to mount empty dir).
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR), check_dir=False), name="static")
+
+
+# ---------- /api/status ----------
+@app.get("/api/status")
+async def api_status() -> dict:
+    st = _require_state()
+    running, pid = _monitor_status()
+    stats = st.sink.stats()
+    return {
+        "ok": True,
+        "server_started_at": st.server_started_at,
+        "uptime_sec": int(time.time() - st.server_started_at),
+        "monitor_running": running,
+        "monitor_pid": pid,
+        "db": {
+            "snapshots": int(stats.get("snapshots", 0)),
+            "alerts": int(stats.get("alerts", 0)),
+            "path": stats.get("path", str(DB_PATH)),
+        },
+        "chains_configured": list(st.rpc_pools.keys()),
+        "protocols_configured": list(st.cfg.enabled_protocols),
+    }
+
+
+# ---------- /api/protocols ----------
+@app.get("/api/protocols")
+async def api_protocols() -> dict:
+    st = _require_state()
+    protocols_out: list[dict] = []
+    for proto in st.cfg.enabled_protocols:
+        proto_entry = st.cfg.protocols.get(proto) or {}
+        chains_list = []
+        for chain in st.cfg.enabled_chains:
+            if chain not in proto_entry:
+                continue
+            chain_cfg = st.cfg.chains.get(chain)
+            chains_list.append({
+                "name": chain,
+                "display": CHAIN_ZH.get(chain, chain),
+                "chain_id": chain_cfg.chain_id if chain_cfg else None,
+            })
+        protocols_out.append({
+            "name": proto,
+            "display": PROTOCOL_ZH.get(proto, proto),
+            "chains": chains_list,
+        })
+    return {"ok": True, "protocols": protocols_out}
+
+
+# ---------- /api/pools ----------
+@app.get("/api/pools")
+async def api_pools() -> dict:
+    st = _require_state()
+    rows = st.sink.list_pools_latest()
+    return {"ok": True, "pools": [_pool_row_to_obj(r) for r in rows]}
+
+
+# ---------- /api/pools/{pool_key}/overview ----------
+@app.get("/api/pools/{pool_key}/overview")
+async def api_pool_overview(pool_key: str) -> JSONResponse:
+    st = _require_state()
+    row = st.sink.get_pool_latest(pool_key)
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": "pool not found"},
+        )
+    pool_obj = _pool_row_to_obj(row)
+    pool_obj["chain_zh"] = CHAIN_ZH.get(pool_obj["chain"], pool_obj["chain"])
+    pool_obj["protocol_zh"] = PROTOCOL_ZH.get(pool_obj["protocol"], pool_obj["protocol"])
+    return JSONResponse({"ok": True, "pool": pool_obj})
+
+
+# ---------- /api/pools/{pool_key}/history ----------
+@app.get("/api/pools/{pool_key}/history")
+async def api_pool_history(
+    pool_key: str,
+    hours: float = Query(24.0, ge=0.1, le=24 * 7),
+) -> dict:
+    st = _require_state()
+    rows = st.sink.get_history(pool_key, hours=hours, max_points=500)
+    series = [
+        {
+            "ts": float(r["ts"]),
+            "supply_usd": float(r.get("supply_usd") or 0.0),
+            "borrow_usd": float(r.get("borrow_usd") or 0.0),
+            "available_liquidity_usd": float(r.get("available_liquidity_usd") or 0.0),
+            "utilization_pct": float(r.get("utilization_pct") or 0.0),
+            "price_usd": float(r.get("price_usd") or 0.0),
+        }
+        for r in rows
+    ]
+    return {
+        "ok": True,
+        "pool_key": pool_key,
+        "hours": hours,
+        "series": series,
+    }
+
+
+# ---------- /api/pools/{pool_key}/activity ----------
+def _parse_pool_key(pool_key: str) -> tuple[str, str, str]:
+    parts = pool_key.split(":")
+    if len(parts) != 3:
+        raise HTTPException(status_code=400, detail="invalid pool_key format")
+    return parts[0], parts[1], parts[2]
+
+
+@app.get("/api/pools/{pool_key}/activity")
+async def api_pool_activity(
+    pool_key: str,
+    hours: float = Query(1.0, ge=0.1, le=24.0),
+    min_usd: float = Query(100_000.0, ge=0.0),
+) -> dict:
+    st = _require_state()
+    row = st.sink.get_pool_latest(pool_key)
+    if row is None:
+        return {"ok": False, "error": "pool not found"}
+    chain, protocol, _symbol = _parse_pool_key(pool_key)
+    if protocol != "aave_v3":
+        return {"ok": False, "error": f"protocol {protocol} not supported for activity"}
+
+    rpc_pool = st.rpc_pools.get(chain)
+    if rpc_pool is None:
+        return {"ok": False, "error": f"no RpcPool for chain={chain}"}
+
+    async def _fetch():
+        deployment = await st.resolver.resolve(chain)
+        return await fetch_pool_activity(
+            rpc_pool=rpc_pool,
+            pool_addr=deployment["pool"],
+            reserve_addr=row["asset"],
+            hours=hours,
+            min_usd=min_usd,
+            price_usd=float(row.get("price_usd") or 0.0),
+            decimals=_infer_decimals(row["symbol"]),
+        )
+
+    key = (pool_key, round(hours, 3), round(min_usd, 2))
+    try:
+        events, cached_at = await st.activity_cache.get_or_fetch(key, _fetch)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("activity fetch failed pool=%s err=%s", pool_key, exc)
+        return {"ok": False, "error": f"activity fetch failed: {exc!s}"}
+
+    return {
+        "ok": True,
+        "pool_key": pool_key,
+        "hours": hours,
+        "min_usd": min_usd,
+        "cached_at": cached_at,
+        "events": events,
+    }
+
+
+# decimals table — needed because SQLite schema doesn't store decimals.
+# For tokens not listed we default to 18.
+_DECIMALS_BY_SYMBOL: dict[str, int] = {
+    "USDC": 6, "USDT": 6, "USDC.e": 6,
+    "WBTC": 8, "cbBTC": 8, "BTCB": 18,  # BTCB on BSC is 18
+    "DAI": 18, "WETH": 18, "wstETH": 18, "weETH": 18, "rETH": 18,
+    "WMATIC": 18, "WBNB": 18, "MATIC": 18,
+}
+
+
+def _infer_decimals(symbol: str) -> int:
+    return _DECIMALS_BY_SYMBOL.get(symbol, 18)
+
+
+# ---------- /api/pools/{pool_key}/holders ----------
+@app.get("/api/pools/{pool_key}/holders")
+async def api_pool_holders(
+    pool_key: str,
+    hours: float = Query(24.0, ge=0.1, le=24 * 3),
+) -> dict:
+    st = _require_state()
+    row = st.sink.get_pool_latest(pool_key)
+    if row is None:
+        return {"ok": False, "error": "pool not found"}
+    chain, protocol, _ = _parse_pool_key(pool_key)
+    if protocol != "aave_v3":
+        return {"ok": False, "error": f"protocol {protocol} not supported"}
+    rpc_pool = st.rpc_pools.get(chain)
+    if rpc_pool is None:
+        return {"ok": False, "error": f"no RpcPool for chain={chain}"}
+
+    async def _fetch():
+        deployment = await st.resolver.resolve(chain)
+        return await fetch_top_holders_by_netflow(
+            rpc_pool=rpc_pool,
+            pool_addr=deployment["pool"],
+            reserve_addr=row["asset"],
+            hours=hours,
+            price_usd=float(row.get("price_usd") or 0.0),
+            decimals=_infer_decimals(row["symbol"]),
+        )
+
+    key = (pool_key, round(hours, 3))
+    try:
+        top, cached_at = await st.holders_cache.get_or_fetch(key, _fetch)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("holders fetch failed pool=%s err=%s", pool_key, exc)
+        return {"ok": False, "error": f"holders fetch failed: {exc!s}"}
+
+    return {
+        "ok": True,
+        "pool_key": pool_key,
+        "method": "net_flow",
+        "hours": hours,
+        "cached_at": cached_at,
+        "top": top,
+    }
+
+
+# ---------- /api/pools/{pool_key}/alerts ----------
+@app.get("/api/pools/{pool_key}/alerts")
+async def api_pool_alerts(
+    pool_key: str,
+    limit: int = Query(50, ge=1, le=500),
+) -> dict:
+    st = _require_state()
+    rows = st.sink.get_alerts_for_pool(pool_key, limit=limit)
+    return {
+        "ok": True,
+        "pool_key": pool_key,
+        "alerts": [_alert_row_to_obj(r, include_pool_info=False) for r in rows],
+    }
+
+
+# ---------- /api/permissions ----------
+@app.get("/api/permissions")
+async def api_permissions(
+    protocol: str = Query(...),
+    chain: str = Query(...),
+    hours: float = Query(24.0, ge=0.1, le=24 * 7),
+) -> dict:
+    st = _require_state()
+    if protocol != "aave_v3":
+        return {"ok": False, "error": f"protocol {protocol} not supported"}
+    rpc_pool = st.rpc_pools.get(chain)
+    if rpc_pool is None:
+        return {"ok": False, "error": f"no RpcPool for chain={chain}"}
+
+    async def _fetch():
+        deployment = await st.resolver.resolve(chain)
+        return await fetch_permission_events(
+            rpc_pool=rpc_pool,
+            pool_addresses_provider_addr=deployment["pool_addresses_provider"],
+            hours=hours,
+        )
+
+    key = (protocol, chain, round(hours, 3))
+    try:
+        events, cached_at = await st.permissions_cache.get_or_fetch(key, _fetch)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("permissions fetch failed chain=%s err=%s", chain, exc)
+        return {"ok": False, "error": f"permissions fetch failed: {exc!s}"}
+
+    return {
+        "ok": True,
+        "protocol": protocol,
+        "chain": chain,
+        "hours": hours,
+        "cached_at": cached_at,
+        "events": events,
+    }
+
+
+# ---------- /api/alerts/recent ----------
+@app.get("/api/alerts/recent")
+async def api_alerts_recent(
+    limit: int = Query(20, ge=1, le=500),
+) -> dict:
+    st = _require_state()
+    rows = st.sink.recent_alerts(limit=limit)
+    return {
+        "ok": True,
+        "alerts": [_alert_row_to_obj(r, include_pool_info=True) for r in rows],
+    }
+
+
+# ---------- /api/mutes ----------
+@app.get("/api/mutes")
+async def api_mutes_list() -> dict:
+    st = _require_state()
+    mutes = st.mute_store.list_active()
+    return {"ok": True, "mutes": [_mute_to_obj(m) for m in mutes]}
+
+
+class MuteCreateBody(BaseModel):
+    pool_key: str
+    rule: str | None = None
+    duration: str | None = None
+    reason: str | None = ""
+
+
+@app.post("/api/mutes")
+async def api_mutes_add(body: MuteCreateBody) -> dict:
+    st = _require_state()
+    duration_sec = parse_duration(body.duration) if body.duration else None
+    mute = st.mute_store.add(
+        pool_key=body.pool_key,
+        rule=body.rule,
+        duration_sec=duration_sec,
+        reason=body.reason or "",
+    )
+    return {"ok": True, "mute": _mute_to_obj(mute)}
+
+
+@app.delete("/api/mutes")
+async def api_mutes_remove(
+    pool_key: str = Query(...),
+    rule: str | None = Query(None),
+) -> dict:
+    st = _require_state()
+    n = st.mute_store.remove(pool_key, rule)
+    return {"ok": True, "removed": int(n)}
+
+
+# ---------- entry ----------
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("WEB_PORT", "8787"))
+    uvicorn.run(
+        "src.web.api:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+    )

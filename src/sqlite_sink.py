@@ -1,0 +1,258 @@
+"""SQLite persistence for snapshots and alerts.
+
+Writes are synchronous — for the demo's low write volume (a few dozen rows/min)
+this is fine. Upgrade to aiosqlite + loop.run_in_executor if we outgrow it.
+"""
+import json
+import sqlite3
+import threading
+import time
+from pathlib import Path
+
+from .aave_v3_collector import ReserveSnapshot
+from .logger import log
+from .rule_engine import Alert
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS reserve_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    pool_key TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    block_number INTEGER NOT NULL,
+    supply_usd REAL,
+    borrow_usd REAL,
+    available_liquidity_usd REAL,
+    utilization_pct REAL,
+    price_usd REAL
+);
+CREATE INDEX IF NOT EXISTS idx_rs_pool_ts ON reserve_snapshots(pool_key, ts);
+CREATE INDEX IF NOT EXISTS idx_rs_ts ON reserve_snapshots(ts);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    level TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    pool_key TEXT NOT NULL,
+    chain TEXT,
+    protocol TEXT,
+    symbol TEXT,
+    message TEXT,
+    metrics TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_al_ts ON alerts(ts);
+CREATE INDEX IF NOT EXISTS idx_al_pool_ts ON alerts(pool_key, ts);
+"""
+
+
+class SqliteSink:
+    def __init__(self, db_path: str = "data/snapshots.db", retention_days: int = 7):
+        self.db_path = db_path
+        self.retention_days = retention_days
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._init_schema()
+        self._prune_old()
+
+    def _init_schema(self) -> None:
+        with self._lock, self._conn:
+            self._conn.executescript(SCHEMA)
+
+    def _prune_old(self) -> None:
+        cutoff = time.time() - self.retention_days * 86400
+        with self._lock, self._conn:
+            r1 = self._conn.execute(
+                "DELETE FROM reserve_snapshots WHERE ts < ?", (cutoff,)
+            )
+            r2 = self._conn.execute("DELETE FROM alerts WHERE ts < ?", (cutoff,))
+            if r1.rowcount or r2.rowcount:
+                log.info(
+                    "pruned %d snapshots, %d alerts older than %dd",
+                    r1.rowcount, r2.rowcount, self.retention_days,
+                )
+
+    def write_snapshots(self, snaps: list[ReserveSnapshot]) -> None:
+        if not snaps:
+            return
+        rows = [
+            (
+                s.timestamp, s.pool_key, s.chain, s.protocol, s.symbol, s.asset,
+                s.block_number, s.supply_usd, s.borrow_usd,
+                s.available_liquidity_usd, s.utilization_pct, s.price_usd,
+            )
+            for s in snaps
+        ]
+        with self._lock, self._conn:
+            self._conn.executemany(
+                """INSERT INTO reserve_snapshots (
+                    ts, pool_key, chain, protocol, symbol, asset, block_number,
+                    supply_usd, borrow_usd, available_liquidity_usd,
+                    utilization_pct, price_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+
+    def write_alert(self, a: Alert) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT INTO alerts (
+                    ts, level, rule, pool_key, chain, protocol, symbol,
+                    message, metrics
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    a.timestamp, a.level, a.rule, a.pool_key, a.chain,
+                    a.protocol, a.symbol, a.message, json.dumps(a.metrics),
+                ),
+            )
+
+    def load_recent_snapshots(self, seconds: int = 3600) -> list[dict]:
+        """Load recent rows for bootstrapping in-memory history."""
+        since = time.time() - seconds
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """SELECT pool_key, ts, chain, protocol, symbol, supply_usd,
+                          borrow_usd, available_liquidity_usd,
+                          utilization_pct, price_usd
+                   FROM reserve_snapshots
+                   WHERE ts >= ?
+                   ORDER BY ts ASC""",
+                (since,),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def stats(self) -> dict:
+        with self._lock, self._conn:
+            snap_cnt = self._conn.execute(
+                "SELECT COUNT(*) FROM reserve_snapshots"
+            ).fetchone()[0]
+            alert_cnt = self._conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+            return {"snapshots": snap_cnt, "alerts": alert_cnt, "path": self.db_path}
+
+    # --------- read APIs (used by web backend) ---------
+    def list_pools_latest(self) -> list[dict]:
+        """Return the newest reserve_snapshots row per pool_key."""
+        sql = """
+            SELECT rs.*
+            FROM reserve_snapshots rs
+            JOIN (
+                SELECT pool_key, MAX(ts) AS max_ts
+                FROM reserve_snapshots
+                GROUP BY pool_key
+            ) m ON rs.pool_key = m.pool_key AND rs.ts = m.max_ts
+            ORDER BY rs.pool_key ASC
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql)
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        # de-dup in case two snapshots tied on ts — keep first
+        seen: set[str] = set()
+        out: list[dict] = []
+        for r in rows:
+            if r["pool_key"] in seen:
+                continue
+            seen.add(r["pool_key"])
+            out.append(r)
+        return out
+
+    def get_pool_latest(self, pool_key: str) -> dict | None:
+        sql = """
+            SELECT * FROM reserve_snapshots
+            WHERE pool_key = ?
+            ORDER BY ts DESC
+            LIMIT 1
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, (pool_key,))
+            cols = [d[0] for d in cur.description]
+            row = cur.fetchone()
+            return dict(zip(cols, row)) if row else None
+
+    def get_history(
+        self,
+        pool_key: str,
+        hours: float = 24.0,
+        max_points: int = 500,
+    ) -> list[dict]:
+        """Return time-ordered history points for a pool, down-sampled
+        to at most `max_points` entries (simple stride decimation)."""
+        since = time.time() - max(0.1, hours) * 3600.0
+        sql = """
+            SELECT ts, supply_usd, borrow_usd, available_liquidity_usd,
+                   utilization_pct, price_usd
+            FROM reserve_snapshots
+            WHERE pool_key = ? AND ts >= ?
+            ORDER BY ts ASC
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, (pool_key, since))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        if not rows:
+            return []
+        if len(rows) <= max_points:
+            return rows
+        # stride decimation — always keep first and last
+        stride = max(1, len(rows) // max_points)
+        sampled = rows[::stride]
+        if sampled[-1] is not rows[-1]:
+            sampled.append(rows[-1])
+        return sampled
+
+    def get_alerts_for_pool(self, pool_key: str, limit: int = 50) -> list[dict]:
+        sql = """
+            SELECT ts, level, rule, pool_key, chain, protocol, symbol,
+                   message, metrics
+            FROM alerts
+            WHERE pool_key = ?
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, (pool_key, int(limit)))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r["metrics"] = _parse_metrics(r.get("metrics"))
+        return rows
+
+    def recent_alerts(self, limit: int = 20) -> list[dict]:
+        sql = """
+            SELECT ts, level, rule, pool_key, chain, protocol, symbol,
+                   message, metrics
+            FROM alerts
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, (int(limit),))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r["metrics"] = _parse_metrics(r.get("metrics"))
+        return rows
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+
+def _parse_metrics(raw) -> dict:
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
