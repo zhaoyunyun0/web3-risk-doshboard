@@ -703,6 +703,7 @@ const state = {
   activityHours: 1,
   activityMinUsd: 100000,
   holdersHours: 24,
+  holdersMethod: "auto",   // auto | subgraph | net_flow
   collapsed: {}      // { "protocol": true, "protocol:chain": true }
 };
 
@@ -1128,8 +1129,17 @@ async function renderHolders(box, pk) {
   const pool = state.pools.find(x => x.pool_key === pk);
   const chain = pool?.chain || "ethereum";
   const hours = state.holdersHours;
+  const method = state.holdersMethod;
+
+  const methodBtns = [
+    {key: "auto", label: "自动"},
+    {key: "subgraph", label: "静态余额 (The Graph)"},
+    {key: "net_flow", label: "净流入"},
+  ].map(m => `<button data-m="${m.key}" class="${m.key===method?'active':''}">${m.label}</button>`).join("");
+
   box.innerHTML = `
     <div class="toolbar">
+      <div class="range-switcher" id="holders-method">${methodBtns}</div>
       <div class="range-switcher" id="holders-range">
         ${[6,24,168].map(h => {
           const lbl = h===168?"7d":(h+"h");
@@ -1137,19 +1147,65 @@ async function renderHolders(box, pk) {
         }).join("")}
       </div>
     </div>
-    <div class="tab-description">按最近 ${hours===168?"7 天":hours+" 小时"} Supply - Withdraw 净流入排名（正=净流入，负=净流出）</div>
+    <div id="holders-desc" class="tab-description"></div>
     <div id="holders-body"><div class="loading">加载中…</div></div>
   `;
+  document.querySelectorAll("#holders-method button").forEach(b => {
+    b.onclick = () => { state.holdersMethod = b.dataset.m; renderHolders(box, pk); };
+  });
   document.querySelectorAll("#holders-range button").forEach(b => {
     b.onclick = () => { state.holdersHours = parseInt(b.dataset.h); renderHolders(box, pk); };
   });
-  const r = await api(`/api/pools/${encodeURIComponent(pk)}/holders?hours=${hours}`);
+
+  const qs = `?hours=${hours}&method=${encodeURIComponent(method)}`;
+  const r = await api(`/api/pools/${encodeURIComponent(pk)}/holders${qs}`);
   const body = document.getElementById("holders-body");
+  const desc = document.getElementById("holders-desc");
+  const rangeEl = document.getElementById("holders-range");
+
   if (!r.ok) {
     body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
+    desc.textContent = "";
     return;
   }
+
   const top = r.top || [];
+  const usedMethod = r.method || "net_flow";
+
+  if (usedMethod === "subgraph") {
+    desc.textContent = "按 aToken 持仓余额(含累积利息)静态排名 · 来源:The Graph subgraph";
+    rangeEl.style.display = "none";  // subgraph is a snapshot, hours irrelevant
+    if (top.length === 0) {
+      body.innerHTML = `<div class="empty">暂无持仓数据</div>`;
+      return;
+    }
+    body.innerHTML = `
+      <table class="data-table">
+        <thead><tr>
+          <th>#</th><th>地址</th>
+          <th class="num">aToken 余额</th>
+          <th class="num">余额 USD</th>
+          <th class="num">变量债务 USD</th>
+        </tr></thead>
+        <tbody>
+        ${top.map(t => `
+          <tr>
+            <td>${t.rank}</td>
+            <td><a class="addr" href="${explorerAddrUrl(chain, t.address)}" target="_blank" title="${t.address}">${t.address_short || fmtAddr(t.address)}</a>${t.tag?`<span style="margin-left:6px;font-size:10px;color:#22d3ee">[${t.tag}]</span>`:""}</td>
+            <td class="num">${(t.balance_token || 0).toLocaleString(undefined, {maximumFractionDigits: 4})}</td>
+            <td class="num">${fmtUSD(t.balance_usd)}</td>
+            <td class="num">${t.variable_debt_usd > 0 ? fmtUSD(t.variable_debt_usd) : "—"}</td>
+          </tr>
+        `).join("")}
+        </tbody>
+      </table>
+    `;
+    return;
+  }
+
+  // default: net_flow
+  desc.textContent = `按最近 ${hours===168?"7 天":hours+" 小时"} Supply - Withdraw 净流入排名(正=净流入,负=净流出)`;
+  rangeEl.style.display = "";
   if (top.length === 0) {
     body.innerHTML = `<div class="empty">暂无数据 (${hours}h 窗口内无活动)</div>`;
     return;

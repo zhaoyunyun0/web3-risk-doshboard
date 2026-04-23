@@ -75,7 +75,7 @@ Web Dashboard:  web / web-stop
 
 ## 未做(v1 计划中)
 
-- ❌ 静态 aToken 余额排名(当前用"近期净流入"代替,Subgraph 接入后可切换)
+- 🟡 静态 aToken 余额排名(代码就绪,见下文 M4 段;配好 The Graph key 即开启)
 - ❌ 多协议(Compound / Morpho / Spark 骨架已预留)
 - ❌ DEX 流动性深度 + 脱锚检测
 - (Dashboard 实时推送已完成,见上)
@@ -237,6 +237,32 @@ API 文档:`docs/WEB_API_CONTRACT.md`
 - 地址/hash 自动缩写,hover 看完整,tx_hash 跳 Etherscan
 - URL hash 路由:`#/pool/ethereum:aave_v3:USDC/activity` 刷新不丢状态
 - Mock 模式:`?mock=1` 不启后端也能看全部 UI,方便前端二开
+
+---
+
+## M4:Top 20 静态余额(The Graph)
+
+持仓 tab 现在支持两种数据源,顶部按钮一键切换:
+
+| 模式 | 数据来源 | 内容 | 配置 |
+|---|---|---|---|
+| `subgraph` | Aave v3 官方 subgraph | aToken 余额(含累积利息)的**静态快照排名** | 需 The Graph API key |
+| `net_flow`(默认) | RPC `eth_getLogs` | 最近 N 小时的 Supply - Withdraw 净流入 | 无需额外配置 |
+
+**启用 subgraph 模式**:
+
+1. 在 https://thegraph.com/studio/apikeys/ 生成 API key
+2. 在 https://aave.com/docs/developers/smart-contracts/subgraph 查到每条链的 Aave v3 subgraph ID
+3. `.env` 加一行(每条链独立,空则该链走 net_flow):
+
+```
+THE_GRAPH_AAVE_V3_URL_ETHEREUM=https://gateway.thegraph.com/api/<KEY>/subgraphs/id/<ID>
+# 其它链:..._ARBITRUM, ..._OPTIMISM, ..._BASE, ..._POLYGON, ..._BNB
+```
+
+4. 重启 `./w3risk web`,持仓 tab 默认自动切到静态余额;未配置的链照常降级 `net_flow`
+
+实现上,subgraph 查 `userReserves` 的 `scaledATokenBalance` 前 20,用 `reserve.liquidityIndex` 乘回真实余额(对应链上 `aToken.balanceOf()`)。
 
 ---
 

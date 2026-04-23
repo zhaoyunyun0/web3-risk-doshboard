@@ -24,6 +24,7 @@ from ..logger import log
 from ..mute_store import MuteStore, parse_duration
 from ..rpc_pool import RpcPool
 from ..sqlite_sink import SqliteSink
+from ..holders_subgraph import fetch_top_holders_subgraph
 from .cache import TTLCache
 from .on_demand import (
     fetch_permission_events,
@@ -386,6 +387,7 @@ def _infer_decimals(symbol: str) -> int:
 async def api_pool_holders(
     pool_key: str,
     hours: float = Query(24.0, ge=0.1, le=24 * 3),
+    method: str = Query("auto", pattern="^(auto|subgraph|net_flow)$"),
 ) -> dict:
     st = _require_state()
     row = st.sink.get_pool_latest(pool_key)
@@ -398,32 +400,64 @@ async def api_pool_holders(
     if rpc_pool is None:
         return {"ok": False, "error": f"no RpcPool for chain={chain}"}
 
-    async def _fetch():
-        deployment = await st.resolver.resolve(chain)
-        return await fetch_top_holders_by_netflow(
-            rpc_pool=rpc_pool,
-            pool_addr=deployment["pool"],
-            reserve_addr=row["asset"],
-            hours=hours,
-            price_usd=float(row.get("price_usd") or 0.0),
-            decimals=_infer_decimals(row["symbol"]),
-        )
+    decimals = _infer_decimals(row["symbol"])
+    price_usd = float(row.get("price_usd") or 0.0)
+    subgraph_url = st.cfg.subgraph_urls_aave_v3.get(chain)
 
-    key = (pool_key, round(hours, 3))
+    # Resolve effective method
+    if method == "auto":
+        effective = "subgraph" if subgraph_url else "net_flow"
+    else:
+        effective = method
+
+    if effective == "subgraph" and not subgraph_url:
+        return {
+            "ok": False,
+            "error": (
+                f"subgraph URL not configured for chain={chain}; "
+                f"set THE_GRAPH_AAVE_V3_URL_{chain.upper()} in .env "
+                "or use method=net_flow"
+            ),
+        }
+
+    if effective == "subgraph":
+        async def _fetch():
+            return await fetch_top_holders_subgraph(
+                subgraph_url=subgraph_url,
+                reserve_addr=row["asset"],
+                price_usd=price_usd,
+                decimals=decimals,
+            )
+        key = (pool_key, "subgraph")
+    else:
+        async def _fetch():
+            deployment = await st.resolver.resolve(chain)
+            return await fetch_top_holders_by_netflow(
+                rpc_pool=rpc_pool,
+                pool_addr=deployment["pool"],
+                reserve_addr=row["asset"],
+                hours=hours,
+                price_usd=price_usd,
+                decimals=decimals,
+            )
+        key = (pool_key, "net_flow", round(hours, 3))
+
     try:
         top, cached_at = await st.holders_cache.get_or_fetch(key, _fetch)
     except Exception as exc:  # noqa: BLE001
-        log.warning("holders fetch failed pool=%s err=%s", pool_key, exc)
+        log.warning("holders fetch failed pool=%s method=%s err=%s", pool_key, effective, exc)
         return {"ok": False, "error": f"holders fetch failed: {exc!s}"}
 
-    return {
+    resp = {
         "ok": True,
         "pool_key": pool_key,
-        "method": "net_flow",
-        "hours": hours,
+        "method": effective,
         "cached_at": cached_at,
         "top": top,
     }
+    if effective == "net_flow":
+        resp["hours"] = hours
+    return resp
 
 
 # ---------- /api/pools/{pool_key}/alerts ----------

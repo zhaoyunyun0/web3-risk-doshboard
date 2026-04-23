@@ -50,6 +50,10 @@ class AppConfig:
     lark_webhook_url: str | None
     lark_push_info: bool
     alert_min_level: str
+    # chain → The Graph gateway URL for Aave v3 holder queries (M4).
+    # Empty when the THE_GRAPH_AAVE_V3_URL_<CHAIN> env var is unset — callers
+    # fall back to net-flow ranking in that case.
+    subgraph_urls_aave_v3: dict[str, str] = field(default_factory=dict)
 
 
 _LEVEL_ORDER = {"info": 0, "warning": 1, "alert": 2, "critical": 3}
@@ -110,6 +114,13 @@ def load_config() -> AppConfig:
     enabled_chains = _csv_env("ENABLED_CHAINS") or list(chains.keys())
     enabled_protocols = _csv_env("ENABLED_PROTOCOLS") or list(protocols.keys())
 
+    subgraph_urls: dict[str, str] = {}
+    for chain in chains.keys():
+        env_key = f"THE_GRAPH_AAVE_V3_URL_{chain.upper()}"
+        url = (os.environ.get(env_key) or "").strip()
+        if url:
+            subgraph_urls[chain] = url
+
     return AppConfig(
         chains=chains,
         defaults=defaults,
@@ -122,4 +133,5 @@ def load_config() -> AppConfig:
         lark_webhook_url=os.environ.get("LARK_WEBHOOK_URL"),
         lark_push_info=os.environ.get("LARK_PUSH_INFO", "false").lower() == "true",
         alert_min_level=os.environ.get("ALERT_MIN_LEVEL", "warning").lower(),
+        subgraph_urls_aave_v3=subgraph_urls,
     )
