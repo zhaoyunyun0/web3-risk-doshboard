@@ -157,7 +157,7 @@
     border-bottom: 1px solid #1e293b;
   }
   .alert-row:hover { background: #1e293b; }
-  .alert-row .ts { color: #64748b; width: 140px; flex-shrink: 0; }
+  .alert-row .ts { color: #64748b; width: 80px; flex-shrink: 0; }
   .alert-row .level-tag { padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
   .alert-row .pool { color: #cbd5e1; width: 260px; flex-shrink: 0; }
   .alert-row .msg { color: #e2e8f0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -270,15 +270,117 @@
   .data-table .addr { font-family: "SF Mono", Menlo, Consolas, monospace; color: #cbd5e1; }
   .data-table .addr:hover { color: #22d3ee; cursor: pointer; }
 
-  .evt-supply td:nth-child(2) { color: #4ade80; }
-  .evt-withdraw td:nth-child(2) { color: #facc15; }
-  .evt-borrow td:nth-child(2) { color: #60a5fa; }
-  .evt-repay td:nth-child(2) { color: #a78bfa; }
-  .evt-liquidationcall td { background: rgba(248, 113, 113, 0.08); }
+  /* 事件图标配色分组：流入绿 / 流出橙 / 清算红 */
+  .evt-supply td:nth-child(2),
+  .evt-repay td:nth-child(2)         { color: #4ade80; }
+  .evt-withdraw td:nth-child(2),
+  .evt-borrow td:nth-child(2)        { color: #fb923c; }
+  .evt-liquidationcall td            { background: rgba(248, 113, 113, 0.08); }
   .evt-liquidationcall td:nth-child(2) { color: #f87171; font-weight: 600; }
 
   .net-positive { color: #4ade80; font-weight: 600; }
   .net-negative { color: #f87171; font-weight: 600; }
+
+  /* ========= 活动页 净流汇总条 ========= */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .stats-card {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .stats-card .icon { font-size: 18px; opacity: 0.9; }
+  .stats-card .body { display: flex; flex-direction: column; min-width: 0; }
+  .stats-card .label { font-size: 11px; color: #94a3b8; letter-spacing: 0.2px; }
+  .stats-card .value {
+    font-size: 16px; font-weight: 600; color: #e2e8f0;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    white-space: nowrap;
+  }
+  .stats-card .value.pos { color: #4ade80; }
+  .stats-card .value.neg { color: #f87171; }
+  .stats-card .value.in  { color: #4ade80; }
+  .stats-card .value.out { color: #fb923c; }
+  .stats-card .value.liq { color: #f87171; }
+
+  /* ========= Ghost 危险按钮（取消屏蔽/取消等）========= */
+  .btn-ghost-danger {
+    color: #f87171;
+    background: transparent;
+    border: 1px solid #7f1d1d;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .btn-ghost-danger:hover { background: rgba(248, 113, 113, 0.08); border-color: #f87171; }
+  .btn-ghost-warn {
+    color: #fb923c;
+    background: transparent;
+    border: 1px solid #7c2d12;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .btn-ghost-warn:hover { background: rgba(251, 146, 60, 0.08); border-color: #fb923c; }
+
+  /* 告警消息里的关键数字高亮 */
+  .msg-num { color: #facc15; font-weight: 600; }
+  .msg-dim { color: #cbd5e1; }
+
+  /* 已屏蔽徽章（紧凑版）*/
+  .mute-badge {
+    padding: 2px 6px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #6ee7b7;
+    border: 1px solid #065f46;
+    border-radius: 3px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  /* Toast 提示 */
+  .toast {
+    position: fixed;
+    bottom: 180px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0f172a;
+    border: 1px solid #22d3ee;
+    color: #e2e8f0;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 2000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    animation: toast-in 0.2s ease-out;
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  /* 活动表 TX/复制按钮组 */
+  .tx-actions { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .icon-btn {
+    background: transparent;
+    border: 1px solid #1e293b;
+    color: #64748b;
+    padding: 1px 5px;
+    font-size: 11px;
+    border-radius: 3px;
+    cursor: pointer;
+    line-height: 1.2;
+  }
+  .icon-btn:hover { color: #22d3ee; border-color: #22d3ee; }
 
   /* ========= Chart ========= */
   .chart-wrap {
@@ -371,12 +473,12 @@
     <div class="breadcrumb" id="breadcrumb">未选择池子</div>
 
     <div class="tabs" id="tabs">
-      <div class="tab active" data-tab="overview">概览</div>
+      <div class="tab active" data-tab="alerts">告警</div>
+      <div class="tab" data-tab="overview">概览</div>
       <div class="tab" data-tab="trend">趋势</div>
       <div class="tab" data-tab="activity">活动</div>
       <div class="tab" data-tab="holders">持仓</div>
       <div class="tab" data-tab="permissions">权限</div>
-      <div class="tab" data-tab="alerts">告警</div>
     </div>
 
     <div class="tab-content" id="tab-content">
@@ -629,8 +731,17 @@ function explorerAddrUrl(chain, addr) {
 }
 
 const EVENT_ICON = {
-  Supply: "📥", Withdraw: "📤", Borrow: "💳", Repay: "💰", LiquidationCall: "⚠️"
+  // 流入类 — 绿：📥 存款 / 💰 还款
+  Supply: "📥", Repay: "💰",
+  // 流出类 — 橙：📤 提款 / 💳 借款
+  Withdraw: "📤", Borrow: "💳",
+  // 清算 — 红
+  LiquidationCall: "⚠️"
 };
+/* 按事件类型分类，用于计算净流汇总 */
+const INFLOW_EVENTS = new Set(["Supply", "Repay"]);
+const OUTFLOW_EVENTS = new Set(["Withdraw", "Borrow"]);
+const LIQUIDATION_EVENTS = new Set(["LiquidationCall"]);
 
 /* =========================================================
    Formatting
@@ -674,6 +785,57 @@ function fmtAbsTime(ts) {
   const pad = n => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
+/* 紧凑剩余时长 — 用于"已屏蔽 · 7d"之类，1-3 字符优先 */
+function fmtShortDuration(sec) {
+  if (sec == null || !isFinite(sec)) return "永久";
+  if (sec <= 0) return "过期";
+  if (sec >= 86400) return Math.round(sec / 86400) + "d";
+  if (sec >= 3600)  return Math.round(sec / 3600)  + "h";
+  if (sec >= 60)    return Math.round(sec / 60)    + "m";
+  return Math.round(sec) + "s";
+}
+/* 稳定币白名单 — 代币数量与 USD 重复，直接显示 — */
+const STABLECOINS = new Set(["USDC", "USDT", "DAI", "USDC.e", "FRAX", "TUSD", "LUSD", "GHO", "crvUSD", "sDAI"]);
+
+/* 告警消息美化：
+ *  1) 剥掉前缀 "ethereum/aave_v3 **USDT** "
+ *  2) 去掉 markdown 的 **bold** 星号
+ *  3) 数字（百分比 / 美元金额）高亮
+ */
+function fmtAlertMessage(raw) {
+  if (!raw) return "";
+  let s = String(raw);
+  // 剥掉 "chain/protocol **SYMBOL** " 前缀
+  s = s.replace(/^\S+\/\S+\s+\*\*[^*]+\*\*\s+/, "");
+  // 去掉残留的 **bold** 标记
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+  // HTML-escape
+  s = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 高亮 $1,234 / $1,234.56 / $1M / $1.2B
+  s = s.replace(/\$[\d,]+(?:\.\d+)?[KMB]?/g, m => `<span class="msg-num">${m}</span>`);
+  // 高亮 99.92% / 100%
+  s = s.replace(/-?\d+(?:\.\d+)?%/g, m => `<span class="msg-num">${m}</span>`);
+  return `<span class="msg-dim">${s}</span>`;
+}
+
+/* 简单 toast 提示 */
+function showToast(text, ms=1500) {
+  const old = document.querySelector(".toast");
+  if (old) old.remove();
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, ms);
+}
+async function copyText(txt) {
+  try {
+    await navigator.clipboard.writeText(txt);
+    showToast("已复制");
+  } catch {
+    showToast("复制失败");
+  }
+}
 
 /* =========================================================
    API wrapper
@@ -699,7 +861,7 @@ const state = {
   pools: [],
   tree: {},          // { protocol: { chain: [pool, ...] } }
   currentPoolKey: null,
-  currentTab: "overview",
+  currentTab: "alerts",
   chartInstance: null,
   trendHours: 24,
   activityHours: 1,
@@ -843,7 +1005,7 @@ function parseHash() {
   const h = location.hash.slice(1);
   const parts = h.split("/").filter(Boolean);
   if (parts[0] === "pool" && parts[1]) {
-    return { poolKey: decodeURIComponent(parts[1]), tab: parts[2] || "overview" };
+    return { poolKey: decodeURIComponent(parts[1]), tab: parts[2] || "alerts" };
   }
   return null;
 }
@@ -958,7 +1120,7 @@ async function renderOverview(box, pk) {
     <div id="mute-panel-container"></div>
     <div style="margin-top:12px;padding:12px 16px;background:#1a0b0b;border:1px solid #450a0a;border-radius:6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <span style="color:#fca5a5;font-size:12px">🗑 从面板删除这个池子(停止采集 + 停止告警,可恢复)</span>
-      <button id="delete-pool-btn" style="margin-left:auto;padding:6px 14px;background:#7f1d1d;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">删除 ${p.symbol}</button>
+      <button id="delete-pool-btn" class="btn-ghost-danger" style="margin-left:auto;padding:6px 14px;font-size:12px">删除 ${p.symbol}</button>
     </div>
   `;
   renderMutePanel("mute-panel-container", pk);
@@ -1056,7 +1218,7 @@ async function renderMutePanel(containerId, pool_key) {
         <span style="color:#facc15;font-size:13px">🔕 整个池子已屏蔽</span>
         <span style="color:#94a3b8;font-size:12px">到期: ${poolMute.human_until || "永久"}</span>
         <span style="color:#94a3b8;font-size:12px">原因: ${poolMute.reason || "(无)"}</span>
-        <button class="mute-undo" data-rule="" style="padding:4px 10px;background:#7f1d1d;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">取消屏蔽</button>
+        <button class="mute-undo btn-ghost-danger" data-rule="" style="padding:4px 12px;font-size:12px">取消屏蔽</button>
       </div>`;
   } else {
     html += `
@@ -1075,7 +1237,7 @@ async function renderMutePanel(containerId, pool_key) {
           <code style="color:#fb923c">${m.rule}</code>
           <span style="color:#94a3b8">到期 ${m.human_until || "永久"}</span>
           <span style="color:#64748b">${m.reason || ""}</span>
-          <button class="mute-undo" data-rule="${m.rule}" style="margin-left:auto;padding:2px 8px;background:#7f1d1d;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">取消</button>
+          <button class="mute-undo btn-ghost-danger" data-rule="${m.rule}" style="margin-left:auto">取消</button>
         </div>`;
     }
     html += `</div>`;
@@ -1331,7 +1493,32 @@ async function renderActivity(box, pk) {
     body.innerHTML = `<div class="empty">暂无数据 (时间 ${hours}h · 阈值 ${fmtUSD(minUsd)})</div>`;
     return;
   }
-  body.innerHTML = `
+  // ------ 净流汇总（基于当前已加载的 events）------
+  let sumIn = 0, sumOut = 0, sumLiq = 0;
+  for (const e of events) {
+    const amt = e.amount_usd || 0;
+    if (INFLOW_EVENTS.has(e.event))         sumIn  += amt;
+    else if (OUTFLOW_EVENTS.has(e.event))   sumOut += amt;
+    else if (LIQUIDATION_EVENTS.has(e.event)) sumLiq += amt;
+  }
+  const net = sumIn - sumOut;
+  const netClass = net >= 0 ? "pos" : "neg";
+  const netTxt = (net >= 0 ? "+" : "-") + fmtUSD(Math.abs(net)).replace(/^-/, "");
+  const statsHtml = `
+    <div class="stats-bar">
+      <div class="stats-card"><span class="icon">📥</span><div class="body">
+        <span class="label">流入 (Supply + Repay)</span><span class="value in">${fmtUSD(sumIn)}</span></div></div>
+      <div class="stats-card"><span class="icon">📤</span><div class="body">
+        <span class="label">流出 (Withdraw + Borrow)</span><span class="value out">${fmtUSD(sumOut)}</span></div></div>
+      <div class="stats-card"><span class="icon">⚠️</span><div class="body">
+        <span class="label">清算 (Liquidation)</span><span class="value liq">${fmtUSD(sumLiq)}</span></div></div>
+      <div class="stats-card"><span class="icon">∑</span><div class="body">
+        <span class="label">净差值 (In − Out)</span><span class="value ${netClass}">${netTxt}</span></div></div>
+    </div>
+  `;
+  // 稳定币的"代币数量"列与 USD 重复，省略为 em dash
+  const isStable = STABLECOINS.has(pool?.symbol);
+  body.innerHTML = statsHtml + `
     <table class="data-table">
       <thead><tr>
         <th>时间</th><th>事件</th><th>用户</th>
@@ -1339,22 +1526,35 @@ async function renderActivity(box, pk) {
         <th class="num">区块</th><th>TX Hash</th>
       </tr></thead>
       <tbody>
-      ${events.map(e => {
+      ${events.map((e, i) => {
         const rowClass = "evt-" + e.event.toLowerCase();
         const icon = EVENT_ICON[e.event] || "•";
+        const tokenCell = isStable
+          ? `<span style="color:#475569">—</span>`
+          : fmtNum(e.amount_token, 4);
         return `<tr class="${rowClass}">
           <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
           <td>${icon} ${e.event_zh || e.event}</td>
           <td><a class="addr" href="${explorerAddrUrl(chain, e.user)}" target="_blank" title="${e.user}">${fmtAddr(e.user)}</a></td>
           <td class="num">${fmtUSD(e.amount_usd)}</td>
-          <td class="num">${fmtNum(e.amount_token, 4)}</td>
+          <td class="num">${tokenCell}</td>
           <td class="num">${e.block?.toLocaleString?.() ?? e.block}</td>
-          <td><a class="addr" href="${explorerTxUrl(chain, e.tx_hash)}" target="_blank" title="${e.tx_hash}">${fmtAddr(e.tx_hash)}</a></td>
+          <td><span class="tx-actions">
+            <a class="addr" href="${explorerTxUrl(chain, e.tx_hash)}" target="_blank" title="${e.tx_hash}">${fmtAddr(e.tx_hash)}</a>
+            <button class="icon-btn tx-copy" data-hash="${e.tx_hash}" title="复制完整 TX Hash">📋</button>
+          </span></td>
         </tr>`;
       }).join("")}
       </tbody>
     </table>
   `;
+  body.querySelectorAll(".tx-copy").forEach(btn => {
+    btn.onclick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      copyText(btn.dataset.hash);
+    };
+  });
 }
 
 /* =========================================================
@@ -1546,25 +1746,29 @@ async function renderAlerts(box, pk) {
     m.pool_key === pk && (!m.rule || m.rule === rule)
   );
 
+  const nowSec = Date.now() / 1000;
   const rowsHtml = alerts.map((a, i) => {
     const mute = a.rule ? findMute(a.rule) : null;
     let actionCell = `<button class="expand-btn" data-i="${i}">展开</button>`;
     if (a.rule) {
       if (mute) {
         const isPoolWide = !mute.rule;
+        const remain = mute.until ? (mute.until - nowSec) : null;
+        const shortUntil = mute.until ? fmtShortDuration(remain) : "永久";
         const tip = (mute.reason || "(无原因)") + " · 到期 " + (mute.human_until || "永久");
-        actionCell += ` <span style="margin-left:6px;padding:2px 6px;background:#065f46;color:#d1fae5;border:1px solid #10b981;border-radius:3px;font-size:11px" title="${tip}">✅ 已屏蔽${isPoolWide ? "(整池)" : ""} · ${mute.human_until || "永久"}</span>`;
-        actionCell += ` <button class="mute-undo-inline" data-rule="${mute.rule || ""}" data-pk="${pk}" style="margin-left:2px;padding:2px 8px;background:#7f1d1d;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">取消</button>`;
+        const scope = isPoolWide ? "(整池)" : "";
+        actionCell += ` <span class="mute-badge" title="${tip}">✅ 屏蔽中${scope} · ${shortUntil}</span>`;
+        actionCell += ` <button class="mute-undo-inline btn-ghost-danger" data-rule="${mute.rule || ""}" data-pk="${pk}">取消</button>`;
       } else {
-        actionCell += ` <button class="mute-rule-inline" data-rule="${a.rule}" data-pk="${pk}" style="margin-left:6px;padding:2px 8px;background:#422006;color:#facc15;border:1px solid #713f12;border-radius:3px;cursor:pointer;font-size:11px" title="屏蔽这条规则 7 天">🔕 屏蔽 7d</button>`;
+        actionCell += ` <button class="mute-rule-inline btn-ghost-warn" data-rule="${a.rule}" data-pk="${pk}" title="屏蔽这条规则 7 天">🔕 屏蔽 7d</button>`;
       }
     }
     return `
       <tr class="level-row-${a.level}">
-        <td title="${fmtAbsTime(a.ts)}">${fmtAbsTime(a.ts)}</td>
+        <td title="${fmtAbsTime(a.ts)}">${fmtRelTime(a.ts)}</td>
         <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
         <td class="mono" style="font-size:11px;color:#94a3b8">${a.rule || ""}</td>
-        <td>${a.message || ""}</td>
+        <td>${fmtAlertMessage(a.message)}</td>
         <td>${actionCell}</td>
       </tr>
       <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${
@@ -1576,11 +1780,11 @@ async function renderAlerts(box, pk) {
   body.innerHTML = `
     <table class="data-table alerts-table">
       <thead><tr>
-        <th style="width:160px">时间</th>
-        <th style="width:80px">级别</th>
-        <th style="width:180px">规则</th>
+        <th style="width:110px">时间</th>
+        <th style="width:70px">级别</th>
+        <th style="width:170px">规则</th>
         <th>消息</th>
-        <th style="width:220px">操作</th>
+        <th style="width:210px">操作</th>
       </tr></thead>
       <tbody id="alerts-tbody">${rowsHtml}</tbody>
     </table>
@@ -1644,10 +1848,10 @@ function renderAlertStream() {
   }
   body.innerHTML = alerts.map(a => `
     <div class="alert-row level-row-${a.level}" data-pk="${a.pool_key || ""}">
-      <span class="ts">${fmtAbsTime(a.ts)}</span>
+      <span class="ts" title="${fmtAbsTime(a.ts)}">${fmtRelTime(a.ts)}</span>
       <span class="level-tag level-${a.level}">${a.level_zh || a.level}</span>
       <span class="pool mono">${a.pool_key || ""}</span>
-      <span class="msg">${a.message || ""}</span>
+      <span class="msg">${fmtAlertMessage(a.message)}</span>
     </div>
   `).join("");
   body.querySelectorAll(".alert-row").forEach(row => {
