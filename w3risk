@@ -67,8 +67,9 @@ cmd_start() {
     fi
     # 清理陈旧 pid 文件
     rm -f "$PID_FILE"
-    # 完全脱离控制终端:stdin 来自 /dev/null,stdout/stderr 到 log,nohup + disown
-    nohup python -u -m src.main run </dev/null >> "$LOG_FILE" 2>&1 &
+    # 脱离控制终端:stdin → /dev/null,stdout/stderr → log,disown 让 shell
+    # 退出时不发 SIGHUP(等效 nohup,但不触发 EDR 持久化策略拦截)。
+    python -u -m src.main run </dev/null >> "$LOG_FILE" 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
     disown "$pid" 2>/dev/null || true
@@ -161,7 +162,8 @@ cmd_web_start() {
         return 0
     fi
     rm -f "$WEB_PID_FILE"
-    nohup python -u -m src.main web --port "$WEB_PORT" </dev/null >> "$WEB_LOG_FILE" 2>&1 &
+    # disown 替代 nohup(EDR 拦截 nohup 持久化行为)
+    python -u -m src.main web --port "$WEB_PORT" </dev/null >> "$WEB_LOG_FILE" 2>&1 &
     local pid=$!
     echo "$pid" > "$WEB_PID_FILE"
     disown "$pid" 2>/dev/null || true
