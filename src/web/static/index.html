@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>w3_risk_dashboard — DeFi 借贷池安全预警</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   /* ========= Base ========= */
   * { box-sizing: border-box; }
@@ -953,7 +954,135 @@ async function renderOverview(box, pk) {
         </span>
       </div>
     </div>
+    <div id="mute-panel-container"></div>
   `;
+  renderMutePanel("mute-panel-container", pk);
+}
+
+/* =========================================================
+   Mute helpers (calls /api/mutes GET/POST/DELETE)
+   ========================================================= */
+async function apiListMutes() {
+  return await api("/api/mutes");
+}
+
+async function apiAddMute(pool_key, rule, duration, reason) {
+  try {
+    const r = await fetch("/api/mutes", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({pool_key, rule: rule || null, duration: duration || null, reason: reason || ""}),
+    });
+    return await r.json();
+  } catch (e) {
+    return {ok: false, error: e.message || "network error"};
+  }
+}
+
+async function apiRemoveMute(pool_key, rule) {
+  try {
+    const qs = new URLSearchParams({pool_key});
+    if (rule) qs.set("rule", rule);
+    const r = await fetch(`/api/mutes?${qs}`, {method: "DELETE"});
+    return await r.json();
+  } catch (e) {
+    return {ok: false, error: e.message || "network error"};
+  }
+}
+
+async function renderMutePanel(containerId, pool_key) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = `<div style="color:#64748b;font-size:12px">加载屏蔽状态…</div>`;
+
+  const r = await apiListMutes();
+  const list = (r.ok && r.mutes) || [];
+  const poolMute = list.find(m => m.pool_key === pool_key && !m.rule);
+  const ruleMutes = list.filter(m => m.pool_key === pool_key && m.rule);
+
+  const durations = [
+    {v: "30m", lbl: "30分钟"},
+    {v: "2h",  lbl: "2小时"},
+    {v: "24h", lbl: "24小时"},
+    {v: "7d",  lbl: "7天"},
+    {v: "",    lbl: "永久"},
+  ];
+  const durBtns = durations.map(d =>
+    `<button class="mute-do" data-d="${d.v}" style="padding:4px 10px;margin:0 4px 0 0;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;cursor:pointer;font-size:12px">${d.lbl}</button>`
+  ).join("");
+
+  let html = `
+    <div style="margin-top:20px;padding:16px;background:#0f172a;border:1px solid #1e293b;border-radius:6px">
+      <div style="font-size:13px;font-weight:bold;margin-bottom:12px;color:#e2e8f0">🔕 告警屏蔽</div>
+  `;
+
+  if (poolMute) {
+    html += `
+      <div style="padding:10px 12px;background:#422006;border:1px solid #713f12;border-radius:4px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="color:#facc15;font-size:13px">🔕 整个池子已屏蔽</span>
+        <span style="color:#94a3b8;font-size:12px">到期: ${poolMute.human_until || "永久"}</span>
+        <span style="color:#94a3b8;font-size:12px">原因: ${poolMute.reason || "(无)"}</span>
+        <button class="mute-undo" data-rule="" style="padding:4px 10px;background:#7f1d1d;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">取消屏蔽</button>
+      </div>`;
+  } else {
+    html += `
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="color:#94a3b8;font-size:12px">屏蔽此池子所有告警:</span>
+        ${durBtns}
+      </div>`;
+  }
+
+  if (ruleMutes.length > 0) {
+    html += `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #1e293b">
+      <div style="color:#94a3b8;font-size:12px;margin-bottom:8px">规则级屏蔽:</div>`;
+    for (const m of ruleMutes) {
+      html += `
+        <div style="padding:6px 10px;background:#0f172a;border:1px solid #1e293b;border-radius:4px;margin-bottom:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px">
+          <code style="color:#fb923c">${m.rule}</code>
+          <span style="color:#94a3b8">到期 ${m.human_until || "永久"}</span>
+          <span style="color:#64748b">${m.reason || ""}</span>
+          <button class="mute-undo" data-rule="${m.rule}" style="margin-left:auto;padding:2px 8px;background:#7f1d1d;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">取消</button>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  el.innerHTML = html;
+
+  el.querySelectorAll(".mute-do").forEach(btn => {
+    btn.onclick = async () => {
+      const duration = btn.dataset.d;  // "" = forever
+      const reason = prompt("屏蔽原因?(可留空)", "") || "";
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = "处理中…";
+      const resp = await apiAddMute(pool_key, null, duration, reason);
+      if (resp.ok) {
+        await renderMutePanel(containerId, pool_key);
+      } else {
+        alert("屏蔽失败: " + (resp.error || resp.detail || "未知错误"));
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    };
+  });
+  el.querySelectorAll(".mute-undo").forEach(btn => {
+    btn.onclick = async () => {
+      const rule = btn.dataset.rule || null;
+      if (!confirm(rule ? `取消屏蔽规则 ${rule} ?` : "取消屏蔽整个池子?")) return;
+      btn.disabled = true;
+      btn.textContent = "处理中…";
+      const resp = await apiRemoveMute(pool_key, rule);
+      if (resp.ok) {
+        await renderMutePanel(containerId, pool_key);
+      } else {
+        alert("取消失败: " + (resp.error || resp.detail || "未知错误"));
+        btn.disabled = false;
+        btn.textContent = "取消";
+      }
+    };
+  });
 }
 
 window.copyToClip = function(txt, btn) {
@@ -1243,10 +1372,10 @@ async function renderPermissions(box, pk) {
     return;
   }
   box.innerHTML = `
-    <div class="tab-description">协议级别权限事件（针对 ${_protocolZh(pool.protocol)} / ${_chainZh(pool.chain)}，而非单个池子），近 24 小时</div>
+    <div class="tab-description">协议级别权限事件（针对 ${_protocolZh(pool.protocol)} / ${_chainZh(pool.chain)}，而非单个池子），近 7 天</div>
     <div id="perm-body"><div class="loading">加载中…</div></div>
   `;
-  const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=24`);
+  const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=168`);
   const body = document.getElementById("perm-body");
   if (!r.ok) {
     body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
@@ -1254,7 +1383,7 @@ async function renderPermissions(box, pk) {
   }
   const events = r.events || [];
   if (events.length === 0) {
-    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 24 小时无权限变更（正常）</div>`;
+    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 7 天无权限变更（正常）</div>`;
     return;
   }
   body.innerHTML = `
@@ -1308,7 +1437,7 @@ async function renderAlerts(box, pk) {
         <th style="width:80px">级别</th>
         <th style="width:180px">规则</th>
         <th>消息</th>
-        <th style="width:100px">操作</th>
+        <th style="width:200px">操作</th>
       </tr></thead>
       <tbody id="alerts-tbody">
       ${alerts.map((a, i) => `
@@ -1317,7 +1446,10 @@ async function renderAlerts(box, pk) {
           <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
           <td class="mono" style="font-size:11px;color:#94a3b8">${a.rule || ""}</td>
           <td>${a.message || ""}</td>
-          <td><button class="expand-btn" data-i="${i}">展开 metrics</button></td>
+          <td>
+            <button class="expand-btn" data-i="${i}">展开</button>
+            ${a.rule ? `<button class="mute-rule-inline" data-rule="${a.rule}" data-pk="${pk}" style="margin-left:6px;padding:2px 8px;background:#422006;color:#facc15;border:1px solid #713f12;border-radius:3px;cursor:pointer;font-size:11px" title="屏蔽这条规则 7 天">🔕 屏蔽 7d</button>` : ""}
+          </td>
         </tr>
         <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${
           JSON.stringify(a.metrics || {}, null, 2)
@@ -1332,7 +1464,28 @@ async function renderAlerts(box, pk) {
       const row = document.getElementById("metrics-" + i);
       const open = row.style.display !== "none";
       row.style.display = open ? "none" : "table-row";
-      b.textContent = open ? "展开 metrics" : "收起";
+      b.textContent = open ? "展开" : "收起";
+    };
+  });
+  document.querySelectorAll(".mute-rule-inline").forEach(b => {
+    b.onclick = async () => {
+      const rule = b.dataset.rule;
+      const poolKey = b.dataset.pk;
+      const reason = prompt(`屏蔽规则 ${rule} 7 天,原因?`, "UI 触发") || "UI 触发";
+      b.disabled = true;
+      const orig = b.textContent;
+      b.textContent = "处理中…";
+      const resp = await apiAddMute(poolKey, rule, "7d", reason);
+      if (resp.ok) {
+        b.textContent = "✅ 已屏蔽";
+        b.style.background = "#065f46";
+        b.style.color = "#d1fae5";
+        b.style.borderColor = "#10b981";
+      } else {
+        alert("屏蔽失败: " + (resp.error || resp.detail || "未知错误"));
+        b.disabled = false;
+        b.textContent = orig;
+      }
     };
   });
 }
