@@ -69,6 +69,7 @@ Web Dashboard:  web / web-stop
 - ✅ **大额活动 on-demand 查询**:Supply / Withdraw / Borrow / Repay / LiquidationCall 事件实时拉取
 - ✅ **Top 20 近期净流入排名**:按 24h Supply-Withdraw 净流向聚合
 - ✅ **协议权限监控**:PoolAddressesProvider 的 9 个权限事件(PoolUpdated、ACLAdminUpdated 等)
+- ✅ **Track B 链上事件实时告警**:主循环每 tick `eth_getLogs` 权限 + 代理升级事件,新事件推 Lark L2 卡片(PRD FR-06)
 
 ## 未做(v1 计划中)
 
@@ -234,6 +235,24 @@ API 文档:`docs/WEB_API_CONTRACT.md`
 - 地址/hash 自动缩写,hover 看完整,tx_hash 跳 Etherscan
 - URL hash 路由:`#/pool/ethereum:aave_v3:USDC/activity` 刷新不丢状态
 - Mock 模式:`?mock=1` 不启后端也能看全部 UI,方便前端二开
+
+---
+
+## Track B:链上事件监控
+
+除 Track A(指标轮询)外,运行循环里内置事件线:每 tick 对 PoolAddressesProvider + Pool 代理合约做 `eth_getLogs`,命中的事件经去重后:
+
+- 入库 `events` 表(UNIQUE `(chain, tx_hash, log_index)`)
+- 按 `rules.yaml` 的 `events.levels` 映射级别(默认 `alert`/`warning`)
+- 新事件推 Lark 中文卡片(标题如 "🟠 告警 · 链上权限事件 · 代理合约已升级(实现替换)")
+
+**监听事件**:
+- PAP 权限:`OwnershipTransferred` / `PoolUpdated` / `PoolConfiguratorUpdated` / `PriceOracleUpdated` / `ACLManagerUpdated` / `ACLAdminUpdated` / `PoolDataProviderUpdated` / `AddressSet` / `AddressSetAsProxy` / `ProxyCreated`
+- Pool 代理(ERC1967 + Pausable):`AdminChanged` / `Upgraded` / `BeaconUpgraded` / `Paused` / `Unpaused`
+
+**首次启动不推 Lark**:回看 ~1 周(ETH,L2 按 50k 块上限约 1 天)把历史事件静默入库,只有启动之后新发生的事件才会推送,避免重启刷屏。游标存 `event_cursors` 表(按 `(chain, contract)`),重启续跑。
+
+在 `config/rules.yaml` 的 `events.levels` 段可改每个事件的默认级别。
 
 ---
 

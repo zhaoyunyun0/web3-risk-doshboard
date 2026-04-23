@@ -47,6 +47,33 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_al_ts ON alerts(ts);
 CREATE INDEX IF NOT EXISTS idx_al_pool_ts ON alerts(pool_key, ts);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    chain TEXT NOT NULL,
+    contract TEXT NOT NULL,
+    contract_role TEXT,
+    event TEXT NOT NULL,
+    level TEXT,
+    block_number INTEGER NOT NULL,
+    tx_hash TEXT NOT NULL,
+    log_index INTEGER NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    extra TEXT,
+    UNIQUE(chain, tx_hash, log_index)
+);
+CREATE INDEX IF NOT EXISTS idx_ev_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_ev_chain_contract_ts ON events(chain, contract, ts);
+
+CREATE TABLE IF NOT EXISTS event_cursors (
+    chain TEXT NOT NULL,
+    contract TEXT NOT NULL,
+    last_block INTEGER NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY(chain, contract)
+);
 """
 
 
@@ -73,10 +100,11 @@ class SqliteSink:
                 "DELETE FROM reserve_snapshots WHERE ts < ?", (cutoff,)
             )
             r2 = self._conn.execute("DELETE FROM alerts WHERE ts < ?", (cutoff,))
-            if r1.rowcount or r2.rowcount:
+            r3 = self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+            if r1.rowcount or r2.rowcount or r3.rowcount:
                 log.info(
-                    "pruned %d snapshots, %d alerts older than %dd",
-                    r1.rowcount, r2.rowcount, self.retention_days,
+                    "pruned %d snapshots, %d alerts, %d events older than %dd",
+                    r1.rowcount, r2.rowcount, r3.rowcount, self.retention_days,
                 )
 
     def write_snapshots(self, snaps: list[ReserveSnapshot]) -> None:
@@ -239,6 +267,100 @@ class SqliteSink:
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         for r in rows:
             r["metrics"] = _parse_metrics(r.get("metrics"))
+        return rows
+
+    # --------- Track B: events & cursors ---------
+    def write_events(self, rows: list[dict]) -> list[dict]:
+        """Insert event rows (dedup via UNIQUE (chain, tx_hash, log_index)).
+
+        Returns the subset that was newly inserted (i.e. not already in DB).
+        Caller can use the returned list to decide what to push to Lark.
+        """
+        if not rows:
+            return []
+        inserted: list[dict] = []
+        with self._lock, self._conn:
+            for r in rows:
+                dup = self._conn.execute(
+                    "SELECT 1 FROM events WHERE chain=? AND tx_hash=? AND log_index=?",
+                    (r["chain"], r["tx_hash"], int(r["log_index"])),
+                ).fetchone()
+                if dup:
+                    continue
+                self._conn.execute(
+                    """INSERT INTO events (
+                        ts, chain, contract, contract_role, event, level,
+                        block_number, tx_hash, log_index,
+                        old_value, new_value, extra
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        float(r["ts"]),
+                        r["chain"],
+                        r["contract"],
+                        r.get("contract_role"),
+                        r["event"],
+                        r.get("level"),
+                        int(r["block_number"]),
+                        r["tx_hash"],
+                        int(r["log_index"]),
+                        r.get("old_value"),
+                        r.get("new_value"),
+                        json.dumps(r.get("extra") or {}),
+                    ),
+                )
+                inserted.append(r)
+        return inserted
+
+    def get_event_cursor(self, chain: str, contract: str) -> int | None:
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT last_block FROM event_cursors WHERE chain=? AND contract=?",
+                (chain, contract),
+            ).fetchone()
+        return int(row[0]) if row else None
+
+    def set_event_cursor(self, chain: str, contract: str, last_block: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT INTO event_cursors (chain, contract, last_block, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(chain, contract) DO UPDATE SET
+                       last_block = excluded.last_block,
+                       updated_at = excluded.updated_at""",
+                (chain, contract, int(last_block), time.time()),
+            )
+
+    def recent_events(
+        self,
+        chain: str | None = None,
+        contract: str | None = None,
+        hours: float = 24.0,
+        limit: int = 100,
+    ) -> list[dict]:
+        since = time.time() - max(0.1, hours) * 3600.0
+        clauses = ["ts >= ?"]
+        params: list = [since]
+        if chain:
+            clauses.append("chain = ?")
+            params.append(chain)
+        if contract:
+            clauses.append("contract = ?")
+            params.append(contract)
+        params.append(int(limit))
+        sql = f"""
+            SELECT ts, chain, contract, contract_role, event, level,
+                   block_number, tx_hash, log_index, old_value, new_value, extra
+            FROM events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, tuple(params))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for r in rows:
+            r["extra"] = _parse_metrics(r.get("extra"))
         return rows
 
     def close(self) -> None:

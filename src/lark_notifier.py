@@ -41,6 +41,31 @@ CHAIN_ZH = {
     "katana": "Katana",
 }
 
+ETHERSCAN_BASES = {
+    "ethereum": "https://etherscan.io",
+    "arbitrum": "https://arbiscan.io",
+    "optimism": "https://optimistic.etherscan.io",
+    "base": "https://basescan.org",
+    "polygon": "https://polygonscan.com",
+    "bnb": "https://bscscan.com",
+}
+
+
+def _etherscan_tx_url(chain: str, tx_hash: str | None) -> str | None:
+    if not tx_hash:
+        return None
+    base = ETHERSCAN_BASES.get(chain)
+    return f"{base}/tx/{tx_hash}" if base else None
+
+
+def _short_hex(s: str, head: int = 6, tail: int = 4) -> str:
+    if not s:
+        return ""
+    if len(s) <= head + tail + 2:
+        return s
+    return f"{s[:head]}...{s[-tail:]}"
+
+
 PROTOCOL_ZH = {
     "aave_v3": "Aave v3",
     "compound_v3": "Compound v3",
@@ -172,6 +197,14 @@ class LarkNotifier:
         card = self._build_card(alert)
         return await self._post({"msg_type": "interactive", "card": card})
 
+    async def send_event_alert(self, event: dict) -> bool:
+        """Push a Track B chain-event alert (permission / proxy / pause)."""
+        if not self.webhook_url:
+            log.warning("Lark webhook 未配置,跳过事件告警: %s", event.get("event"))
+            return False
+        card = self._build_event_card(event)
+        return await self._post({"msg_type": "interactive", "card": card})
+
     async def send_heartbeat(
         self,
         chain: str,
@@ -231,6 +264,74 @@ class LarkNotifier:
                 {"tag": "markdown", "content": meta_line},
                 {"tag": "hr"},
                 {"tag": "markdown", "content": body},
+                {"tag": "hr"},
+                {"tag": "markdown", "content": footer},
+            ],
+        }
+
+    def _build_event_card(self, ev: dict) -> dict:
+        level = ev.get("level") or "info"
+        emoji = LEVEL_EMOJI.get(level, "🔔")
+        template = CARD_TEMPLATES.get(level, "blue")
+        level_zh = LEVEL_ZH.get(level, level)
+        chain = ev.get("chain") or ""
+        chain_zh = CHAIN_ZH.get(chain, chain)
+        event_name = ev.get("event", "")
+        event_zh = ev.get("event_zh") or event_name
+        role = ev.get("contract_role") or ""
+
+        title = f"{emoji} {level_zh} · 链上权限事件 · {event_zh}"
+
+        contract = ev.get("contract", "") or ""
+        contract_short = _short_hex(contract)
+        role_suffix = f"({role})" if role else ""
+        meta_line = (
+            f"**链**:{chain_zh}   "
+            f"**合约**:`{contract_short}`{role_suffix}   "
+            f"**级别**:{level_zh}"
+        )
+
+        body_lines = [f"**事件**:`{event_name}` · {event_zh}"]
+        old_v = ev.get("old_value")
+        new_v = ev.get("new_value")
+        if old_v and new_v:
+            body_lines.append(f"**旧值**:`{_short_hex(str(old_v))}`")
+            body_lines.append(f"**新值**:`{_short_hex(str(new_v))}`")
+        elif new_v:
+            body_lines.append(f"**地址**:`{_short_hex(str(new_v))}`")
+
+        extra = ev.get("extra") or {}
+        if extra.get("id_str"):
+            body_lines.append(f"**id**:`{extra['id_str']}`")
+        elif extra.get("id_hex"):
+            body_lines.append(f"**id**:`{_short_hex(extra['id_hex'])}`")
+
+        tx_hash = ev.get("tx_hash") or ""
+        tx_url = _etherscan_tx_url(chain, tx_hash)
+        tx_short = _short_hex(tx_hash, head=10, tail=8)
+        if tx_url:
+            body_lines.append(f"**交易**:[{tx_short}]({tx_url})")
+        elif tx_hash:
+            body_lines.append(f"**交易**:`{tx_short}`")
+        bn = ev.get("block_number")
+        if bn is not None:
+            body_lines.append(f"**区块**:{bn}")
+
+        ts = ev.get("ts") or time.time()
+        footer = (
+            f"🕒 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))}"
+            f"   📌 Track B"
+        )
+
+        return {
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": template,
+            },
+            "elements": [
+                {"tag": "markdown", "content": meta_line},
+                {"tag": "hr"},
+                {"tag": "markdown", "content": "\n".join(body_lines)},
                 {"tag": "hr"},
                 {"tag": "markdown", "content": footer},
             ],

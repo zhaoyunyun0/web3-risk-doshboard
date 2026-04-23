@@ -51,3 +51,27 @@ liquidity_drain:
 # 默认去重:同一 (pool, rule) 对 5 分钟内不重复告警
 dedup:
   window_sec: 300
+
+# ---------- Track B:链上事件告警 ----------
+# 每 tick eth_getLogs 监听 PoolAddressesProvider + Pool 代理合约的权限/升级事件
+# 默认级别按 PRD FR-06 给定;事件名在 src/events.py 定义。
+# 首次启动回看 ~1 小时历史(只入库,不推 Lark,避免重启刷屏)。
+events:
+  levels:
+    # PoolAddressesProvider 级
+    OwnershipTransferred:    alert       # R-AUTH-01 所有权转移
+    PoolUpdated:             alert       # Pool 实现替换(等同 Upgraded)
+    PoolConfiguratorUpdated: alert
+    PriceOracleUpdated:      alert       # 预言机替换,潜在操纵入口
+    ACLManagerUpdated:       alert
+    ACLAdminUpdated:         alert       # R-AUTH-04 admin 角色变更
+    PoolDataProviderUpdated: warning     # 只读元数据,优先级较低
+    AddressSet:              warning
+    AddressSetAsProxy:       alert
+    ProxyCreated:            warning
+    # Pool 代理(ERC1967 + Pausable)级
+    AdminChanged:            alert       # R-AUTH-02 代理管理员变更
+    Upgraded:                alert       # R-AUTH-03 实现替换
+    BeaconUpgraded:          alert
+    Paused:                  warning     # R-AUTH-05 紧急暂停
+    Unpaused:                warning

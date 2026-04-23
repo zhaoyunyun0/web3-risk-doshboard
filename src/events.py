@@ -229,6 +229,54 @@ TOPIC0_TO_POOL_EVENT: dict[str, str] = {v.lower(): k for k, v in POOL_EVENT_TOPI
 TOPIC0_TO_PERMISSION_EVENT: dict[str, str] = {v.lower(): k for k, v in PERMISSION_EVENT_TOPIC0.items()}
 
 
+# ---------- ERC1967 Proxy + Pausable events (Track B on Pool proxy) ----------
+PROXY_EVENTS_ABI = [
+    {
+        "anonymous": False, "type": "event", "name": "AdminChanged",
+        "inputs": [
+            {"indexed": False, "internalType": "address", "name": "previousAdmin", "type": "address"},
+            {"indexed": False, "internalType": "address", "name": "newAdmin",      "type": "address"},
+        ],
+    },
+    {
+        "anonymous": False, "type": "event", "name": "Upgraded",
+        "inputs": [
+            {"indexed": True, "internalType": "address", "name": "implementation", "type": "address"},
+        ],
+    },
+    {
+        "anonymous": False, "type": "event", "name": "BeaconUpgraded",
+        "inputs": [
+            {"indexed": True, "internalType": "address", "name": "beacon", "type": "address"},
+        ],
+    },
+    {
+        "anonymous": False, "type": "event", "name": "Paused",
+        "inputs": [
+            {"indexed": False, "internalType": "address", "name": "account", "type": "address"},
+        ],
+    },
+    {
+        "anonymous": False, "type": "event", "name": "Unpaused",
+        "inputs": [
+            {"indexed": False, "internalType": "address", "name": "account", "type": "address"},
+        ],
+    },
+]
+
+EVENT_SIGNATURES.update({
+    "AdminChanged":   "AdminChanged(address,address)",
+    "Upgraded":       "Upgraded(address)",
+    "BeaconUpgraded": "BeaconUpgraded(address)",
+    "Paused":         "Paused(address)",
+    "Unpaused":       "Unpaused(address)",
+})
+
+PROXY_EVENT_NAMES = ["AdminChanged", "Upgraded", "BeaconUpgraded", "Paused", "Unpaused"]
+PROXY_EVENT_TOPIC0: dict[str, str] = {n: topic0_for(n) for n in PROXY_EVENT_NAMES}
+TOPIC0_TO_PROXY_EVENT: dict[str, str] = {v.lower(): k for k, v in PROXY_EVENT_TOPIC0.items()}
+
+
 # ---------- i18n ----------
 EVENT_ZH: dict[str, str] = {
     "Supply": "存款",
@@ -249,4 +297,9 @@ PERMISSION_EVENT_ZH: dict[str, str] = {
     "AddressSet":              "地址条目被设置",
     "AddressSetAsProxy":       "代理地址被设置(指向新实现)",
     "OwnershipTransferred":    "所有权已转移",
+    "AdminChanged":            "代理合约管理员变更",
+    "Upgraded":                "代理合约已升级(实现替换)",
+    "BeaconUpgraded":          "Beacon 代理已升级",
+    "Paused":                  "合约已暂停",
+    "Unpaused":                "合约已恢复",
 }

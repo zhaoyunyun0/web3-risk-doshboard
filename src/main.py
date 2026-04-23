@@ -7,6 +7,7 @@ import time
 
 from .aave_v3_collector import AaveV3Collector
 from .config import AppConfig, level_ge, load_config
+from .event_tracker import EventTracker
 from .lark_notifier import LarkNotifier
 from .logger import log
 from .mute_store import MuteStore, parse_duration
@@ -34,8 +35,11 @@ class ChainWorker:
         self.store = SnapshotStore(retention_sec=3600, sink=sink)
         self.rule_engine = RuleEngine(cfg.rules)
         self.collectors: list = []
+        self.event_tracker: EventTracker | None = None
 
     async def init(self) -> None:
+        pap: str | None = None
+        pool_addr: str | None = None
         if "aave_v3" in self.cfg.enabled_protocols:
             pap = (self.cfg.protocols.get("aave_v3") or {}).get(self.chain, {}).get(
                 "pool_addresses_provider"
@@ -52,6 +56,18 @@ class ChainWorker:
                 )
                 await c.init()
                 self.collectors.append(c)
+                if c.deployment is not None:
+                    pool_addr = c.deployment.pool
+
+        if self.sink is not None and (pap or pool_addr):
+            self.event_tracker = EventTracker(
+                chain=self.chain,
+                rpc_pool=self.rpc_pool,
+                sink=self.sink,
+                pap_addr=pap,
+                pool_addr=pool_addr,
+                event_rules=(self.cfg.rules or {}).get("events") or {},
+            )
 
     async def tick(self) -> None:
         started = time.time()
@@ -105,6 +121,22 @@ class ChainWorker:
                 "alert level=%s rule=%s pool=%s sent=%s",
                 a.level, a.rule, a.pool_key, ok,
             )
+
+        # Track B: chain events (permissions / proxy upgrades / pause)
+        if self.event_tracker is not None:
+            try:
+                new_events = await self.event_tracker.tick()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("event tracker tick failed chain=%s: %s", self.chain, exc)
+                new_events = []
+            for ev in new_events:
+                if not level_ge(ev.get("level") or "info", self.cfg.alert_min_level):
+                    continue
+                ok = await self.notifier.send_event_alert(ev)
+                log.info(
+                    "event alert chain=%s contract=%s event=%s level=%s sent=%s",
+                    ev["chain"], ev["contract"], ev["event"], ev.get("level"), ok,
+                )
 
 
 async def run_loop(cfg: AppConfig) -> None:
