@@ -192,6 +192,16 @@ def _mute_to_obj(m) -> dict:
 
 
 # ---------- static & index ----------
+# 前端是单文件 SPA,每次发布即热更新。浏览器缓存旧 JS 会导致"加载不出来"的
+# 假象(老版本 boot 流程和新后端不兼容)。index.html 一律 no-cache,让浏览器
+# 每次都拿最新。JS/CSS 变化很低频,no-cache 成本可忽略。
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 @app.get("/")
 async def index() -> FileResponse:
     idx = STATIC_DIR / "index.html"
@@ -205,7 +215,7 @@ async def index() -> FileResponse:
                 "frontend_present": False,
             }
         )
-    return FileResponse(str(idx))
+    return FileResponse(str(idx), headers=NO_CACHE_HEADERS)
 
 
 # Mount static after startup creates the dir (safe to mount empty dir).
@@ -537,7 +547,7 @@ async def api_permissions(
         deployment = await st.resolver.resolve(chain)
         return await fetch_permission_events(
             rpc_pool=rpc_pool,
-            pool_addresses_provider_addr=deployment["pool_addresses_provider"],
+            deployment=deployment,
             hours=hours,
         )
 
