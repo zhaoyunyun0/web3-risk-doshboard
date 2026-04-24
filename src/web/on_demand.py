@@ -25,6 +25,19 @@ from ..events import (
 )
 from ..logger import log
 from ..rpc_pool import RpcPool
+from .permission_abis import (
+    ACL_MANAGER_EVENT_ZH,
+    ACL_MANAGER_EVENTS_ABI,
+    ACL_MANAGER_TOPIC0,
+    POOL_CONFIGURATOR_EVENT_ZH,
+    POOL_CONFIGURATOR_EVENTS_ABI,
+    POOL_CONFIGURATOR_TOPIC0,
+    POOL_PROXY_EVENT_ZH,
+    POOL_PROXY_EVENTS_ABI,
+    POOL_PROXY_TOPIC0,
+    format_event_display,
+    format_role_hash,
+)
 
 
 # ---------- chain-wide assumptions ----------
@@ -419,61 +432,106 @@ async def fetch_top_holders_by_netflow(
 
 
 # ---------- permission events ----------
-async def fetch_permission_events(
-    rpc_pool: RpcPool,
-    pool_addresses_provider_addr: str,
-    hours: float,
-) -> list[dict]:
-    """Fetch permission / upgrade events on the PoolAddressesProvider."""
-    chain = rpc_pool.chain
+# 把每个合约的(地址, 角色名, ABI, 中文描述 map, topic0 map)打包到一张表里,
+# 统一驱动扫描逻辑。这样加合约只要往 _permission_targets 加一行。
+def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], dict, dict]]:
+    """返回 [(addr_checksum, role, abi, zh_map, topic0_map), ...]。
+    地址为 None 的合约会被过滤掉(resolver 没拿到时降级)。"""
+    targets: list[tuple[str, str, list[dict], dict, dict]] = []
 
-    async def _bn(w3: AsyncWeb3):
-        return await w3.eth.block_number
-    latest = int(await rpc_pool.execute(_bn, method_label="block_number"))
-    span = _blocks_for_hours(chain, hours)
-    from_block = max(0, latest - span)
-    to_block = latest
+    pap = deployment.get("pool_addresses_provider")
+    if pap:
+        targets.append((
+            AsyncWeb3.to_checksum_address(pap),
+            "PoolAddressesProvider",
+            POOL_ADDRESSES_PROVIDER_EVENTS_ABI,
+            PERMISSION_EVENT_ZH,
+            PERMISSION_EVENT_TOPIC0,
+        ))
 
-    pap_cs = AsyncWeb3.to_checksum_address(pool_addresses_provider_addr)
-    topic0_list = list(PERMISSION_EVENT_TOPIC0.values())
-    base_params = {"address": pap_cs, "topics": [topic0_list]}
+    pool_cfg = deployment.get("pool_configurator")
+    if pool_cfg:
+        targets.append((
+            AsyncWeb3.to_checksum_address(pool_cfg),
+            "PoolConfigurator",
+            POOL_CONFIGURATOR_EVENTS_ABI,
+            POOL_CONFIGURATOR_EVENT_ZH,
+            POOL_CONFIGURATOR_TOPIC0,
+        ))
 
-    logs = await get_logs_paginated(
-        rpc_pool, base_params, from_block, to_block,
-        method_label="eth_getLogs.permissions",
-    )
-    if not logs:
-        return []
+    acl = deployment.get("acl_manager")
+    if acl:
+        targets.append((
+            AsyncWeb3.to_checksum_address(acl),
+            "ACLManager",
+            ACL_MANAGER_EVENTS_ABI,
+            ACL_MANAGER_EVENT_ZH,
+            ACL_MANAGER_TOPIC0,
+        ))
 
-    block_set = {int(l["blockNumber"]) for l in logs}
-    ts_map = await _block_timestamps(rpc_pool, block_set)
+    pool = deployment.get("pool")
+    if pool:
+        targets.append((
+            AsyncWeb3.to_checksum_address(pool),
+            "Pool",
+            POOL_PROXY_EVENTS_ABI,
+            POOL_PROXY_EVENT_ZH,
+            POOL_PROXY_TOPIC0,
+        ))
 
-    out: list[dict] = []
-    for l in logs:
-        name, args = _decode_log_with_abi(POOL_ADDRESSES_PROVIDER_EVENTS_ABI, l)
-        if name is None:
-            continue
+    return targets
 
-        bn = int(l["blockNumber"])
-        ts = ts_map.get(bn)
-        if ts is None:
-            continue
 
-        txh = l["transactionHash"].hex() if hasattr(l["transactionHash"], "hex") else str(l["transactionHash"])
-        if not txh.startswith("0x"):
-            txh = "0x" + txh
+def _normalize_bytes32(raw) -> str | None:
+    """bytes32 -> 0x-prefix lowercase hex string."""
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        return "0x" + raw.hex()
+    s = str(raw).lower()
+    if not s.startswith("0x"):
+        s = "0x" + s
+    return s
 
-        # unify old/new values across event shapes
-        old_val = args.get("oldAddress") or args.get("oldImplementationAddress") or args.get("previousOwner")
-        new_val = (
+
+def _normalize_addr(val) -> str | None:
+    if val is None:
+        return None
+    try:
+        return AsyncWeb3.to_checksum_address(val)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _build_event_record(
+    *, log_entry: LogReceipt, role: str, name: str, args: dict,
+    zh_map: dict, ts: float, bn: int, txh: str,
+) -> dict:
+    """把单条解码后事件转成前端 dict。按事件类型归一化
+    old/new/asset/extra。"""
+    contract = log_entry["address"]
+    if isinstance(contract, (bytes, bytearray)):
+        contract = "0x" + contract.hex()
+    contract_cs = AsyncWeb3.to_checksum_address(contract)
+
+    old_val: Any = None
+    new_val: Any = None
+    asset: str | None = None
+    extra: dict[str, Any] = {}
+
+    # ---------- 按 role 归一化 ----------
+    if role == "PoolAddressesProvider":
+        old_val = _normalize_addr(
+            args.get("oldAddress")
+            or args.get("oldImplementationAddress")
+            or args.get("previousOwner")
+        )
+        new_val = _normalize_addr(
             args.get("newAddress")
             or args.get("newImplementationAddress")
             or args.get("newOwner")
             or args.get("proxyAddress")
         )
-
-        # bytes32 id for AddressSet / ProxyCreated / AddressSetAsProxy
-        extra: dict[str, Any] = {}
         if "id" in args and args["id"] is not None:
             raw = args["id"]
             if isinstance(raw, (bytes, bytearray)):
@@ -486,18 +544,201 @@ async def fetch_permission_events(
                 extra["id_hex"] = str(raw)
                 extra["id_str"] = None
 
-        out.append({
-            "ts": ts,
-            "block": bn,
-            "tx_hash": txh,
-            "contract": pap_cs,
-            "contract_role": "PoolAddressesProvider",
-            "event": name,
-            "description_zh": PERMISSION_EVENT_ZH.get(name, name),
-            "old_value": old_val,
-            "new_value": new_val,
-            **extra,
-        })
+    elif role == "PoolConfigurator":
+        asset = _normalize_addr(args.get("asset"))
+        # old/new 两种形态: (a) 明确 oldX/newX 数值; (b) 单一 bool(enabled/frozen/...)
+        # 按事件名分支处理,简单粗暴但好读。
+        if name == "SupplyCapChanged":
+            old_val = str(args.get("oldSupplyCap"))
+            new_val = str(args.get("newSupplyCap"))
+        elif name == "BorrowCapChanged":
+            old_val = str(args.get("oldBorrowCap"))
+            new_val = str(args.get("newBorrowCap"))
+        elif name == "ReserveFactorChanged":
+            old_val = str(args.get("oldReserveFactor"))
+            new_val = str(args.get("newReserveFactor"))
+        elif name == "LiquidationProtocolFeeChanged":
+            old_val = str(args.get("oldFee"))
+            new_val = str(args.get("newFee"))
+        elif name == "DebtCeilingChanged":
+            old_val = str(args.get("oldDebtCeiling"))
+            new_val = str(args.get("newDebtCeiling"))
+        elif name == "UnbackedMintCapChanged":
+            old_val = str(args.get("oldUnbackedMintCap"))
+            new_val = str(args.get("newUnbackedMintCap"))
+        elif name == "ReserveInterestRateStrategyChanged":
+            old_val = _normalize_addr(args.get("oldStrategy"))
+            new_val = _normalize_addr(args.get("newStrategy"))
+        elif name == "EModeAssetCategoryChanged":
+            old_val = str(args.get("oldCategoryId"))
+            new_val = str(args.get("newCategoryId"))
+        elif name == "SiloedBorrowingChanged":
+            old_val = str(args.get("oldState"))
+            new_val = str(args.get("newState"))
+        elif name in ("ReserveFrozen", "ReservePaused", "ReserveActive"):
+            key = {"ReserveFrozen": "frozen", "ReservePaused": "paused", "ReserveActive": "active"}[name]
+            new_val = str(args.get(key))
+        elif name in ("ReserveBorrowing", "ReserveFlashLoaning"):
+            new_val = str(args.get("enabled"))
+        elif name == "BorrowableInIsolationChanged":
+            new_val = str(args.get("borrowable"))
+        elif name == "CollateralConfigurationChanged":
+            extra["ltv"] = str(args.get("ltv"))
+            extra["liquidationThreshold"] = str(args.get("liquidationThreshold"))
+            extra["liquidationBonus"] = str(args.get("liquidationBonus"))
+        elif name == "EModeCategoryAdded":
+            asset = None
+            extra["categoryId"] = str(args.get("categoryId"))
+            extra["ltv"] = str(args.get("ltv"))
+            extra["liquidationThreshold"] = str(args.get("liquidationThreshold"))
+            extra["liquidationBonus"] = str(args.get("liquidationBonus"))
+            extra["oracle"] = _normalize_addr(args.get("oracle"))
+            extra["label"] = args.get("label")
+        elif name == "ReserveInitialized":
+            extra["aToken"] = _normalize_addr(args.get("aToken"))
+            extra["stableDebtToken"] = _normalize_addr(args.get("stableDebtToken"))
+            extra["variableDebtToken"] = _normalize_addr(args.get("variableDebtToken"))
+            extra["interestRateStrategyAddress"] = _normalize_addr(args.get("interestRateStrategyAddress"))
+        # ReserveDropped 只有 asset,无 old/new。
+
+    elif role == "ACLManager":
+        # RoleGranted/RoleRevoked: role(bytes32), account(addr), sender(addr)
+        # RoleAdminChanged: role, previousAdminRole, newAdminRole (3 个 bytes32)
+        extra["role"] = _normalize_bytes32(args.get("role"))
+        if name in ("RoleGranted", "RoleRevoked"):
+            extra["account"] = _normalize_addr(args.get("account"))
+            extra["sender"] = _normalize_addr(args.get("sender"))
+            # new_value 放 account,让老 UI 也能显示目标地址
+            new_val = extra["account"]
+        elif name == "RoleAdminChanged":
+            old_val = _normalize_bytes32(args.get("previousAdminRole"))
+            new_val = _normalize_bytes32(args.get("newAdminRole"))
+
+    elif role == "Pool":
+        if name == "Upgraded":
+            new_val = _normalize_addr(args.get("implementation"))
+        elif name == "AdminChanged":
+            old_val = _normalize_addr(args.get("previousAdmin"))
+            new_val = _normalize_addr(args.get("newAdmin"))
+
+    out = {
+        "ts": ts,
+        "block": bn,
+        "tx_hash": txh,
+        "contract": contract_cs,
+        "contract_role": role,
+        "event": name,
+        "description_zh": zh_map.get(name, name),
+        "asset": asset,
+        "old_value": old_val,
+        "new_value": new_val,
+    }
+    if extra:
+        out["extra"] = extra
+
+    # --- 人类可读 display 字段(前端优先用这个,fallback 到 fmtAddr) ---
+    old_display, new_display, extra_display = format_event_display(name, old_val, new_val, extra)
+    if old_display is not None:
+        out["old_display"] = old_display
+    if new_display is not None:
+        out["new_display"] = new_display
+    if extra_display:
+        out["extra_display"] = extra_display
+
+    # --- ACL: role bytes32 → 可读名 ---
+    if role == "ACLManager" and extra and extra.get("role"):
+        role_name = format_role_hash(extra.get("role"))
+        if role_name:
+            out.setdefault("extra_display", {})["role_name"] = role_name
+
+    return out
+
+
+async def fetch_permission_events(
+    rpc_pool: RpcPool,
+    deployment: dict,
+    hours: float,
+) -> list[dict]:
+    """扫 4 个合约的权限/参数变更事件并统一返回。
+
+    deployment 至少要包含 `pool_addresses_provider`;其它可选:
+    `pool_configurator` / `acl_manager` / `pool`。缺失的合约自动跳过。
+
+    返回 list[dict],按时间倒序,统一字段见 _build_event_record。
+    """
+    chain = rpc_pool.chain
+
+    async def _bn(w3: AsyncWeb3):
+        return await w3.eth.block_number
+    latest = int(await rpc_pool.execute(_bn, method_label="block_number"))
+    span = _blocks_for_hours(chain, hours)
+    from_block = max(0, latest - span)
+    to_block = latest
+
+    targets = _permission_targets(deployment)
+    if not targets:
+        return []
+
+    # 所有合约的 topic0 合并成一张大 OR — 然后 eth_getLogs 用 address 数组
+    # 一次拉下来,而不是 4 个串行请求。web3.py 的 AsyncEth.get_logs 支持
+    # address: [addr1, addr2, ...]。
+    addr_list = [t[0] for t in targets]
+    all_topic0: list[str] = []
+    for _addr, _role, _abi, _zh, topic_map in targets:
+        all_topic0.extend(topic_map.values())
+    # 去重,避免同一 hash 出现多次(理论上每个事件签名 topic0 唯一,但保险)
+    all_topic0 = list(dict.fromkeys(all_topic0))
+
+    base_params = {"address": addr_list, "topics": [all_topic0]}
+
+    logs = await get_logs_paginated(
+        rpc_pool, base_params, from_block, to_block,
+        method_label="eth_getLogs.permissions",
+    )
+    if not logs:
+        return []
+
+    # 建立 地址 -> (role, abi, zh_map) 的查表,用于按 log.address 路由到
+    # 对应 ABI 解码。
+    addr_to_target: dict[str, tuple[str, list[dict], dict]] = {
+        t[0].lower(): (t[1], t[2], t[3]) for t in targets
+    }
+
+    block_set = {int(l["blockNumber"]) for l in logs}
+    ts_map = await _block_timestamps(rpc_pool, block_set)
+
+    out: list[dict] = []
+    for l in logs:
+        raw_addr = l["address"]
+        if isinstance(raw_addr, (bytes, bytearray)):
+            addr_key = ("0x" + raw_addr.hex()).lower()
+        else:
+            addr_key = str(raw_addr).lower()
+        found = addr_to_target.get(addr_key)
+        if found is None:
+            # 不该发生,保险跳过
+            continue
+        role, abi, zh_map = found
+
+        name, args = _decode_log_with_abi(abi, l)
+        if name is None:
+            # 事件 topic0 命中但该合约 ABI 解不出来 — 跳过(不在我们关注列表)
+            continue
+
+        bn = int(l["blockNumber"])
+        ts = ts_map.get(bn)
+        if ts is None:
+            continue
+
+        txh = l["transactionHash"].hex() if hasattr(l["transactionHash"], "hex") else str(l["transactionHash"])
+        if not txh.startswith("0x"):
+            txh = "0x" + txh
+
+        rec = _build_event_record(
+            log_entry=l, role=role, name=name, args=args,
+            zh_map=zh_map, ts=ts, bn=bn, txh=txh,
+        )
+        out.append(rec)
 
     out.sort(key=lambda x: x["ts"], reverse=True)
     return out

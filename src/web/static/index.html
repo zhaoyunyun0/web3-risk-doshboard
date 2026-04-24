@@ -2615,6 +2615,41 @@ async function renderPermissions(box, pk) {
     body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 ${hoursLbl}无权限变更（正常）</div>`;
     return;
   }
+  // asset 地址 → symbol 映射(从 state.pools 反查,避免后端加 RPC 调用)
+  const _assetSymbol = new Map();
+  (state.pools || []).forEach(pp => {
+    if (pp.chain === pool.chain && pp.protocol === pool.protocol && pp.asset) {
+      _assetSymbol.set(String(pp.asset).toLowerCase(), pp.symbol);
+    }
+  });
+  // 单值智能格式化:是地址(0x 开头且较长)才 fmtAddr,否则原样+千分位
+  const _renderVal = (v) => {
+    if (v === null || v === undefined || v === "") return "";
+    const s = String(v);
+    if (/^0x[0-9a-fA-F]{20,}$/.test(s)) return fmtAddr(s);
+    // 纯整数 → 千分位
+    if (/^-?\d+$/.test(s)) {
+      try { return BigInt(s).toLocaleString("en-US"); }
+      catch { return s; }
+    }
+    return s;
+  };
+  const _pickOld = (e) => e.old_display ?? (e.old_value != null ? _renderVal(e.old_value) : "");
+  const _pickNew = (e) => {
+    if (e.new_display != null) return e.new_display;
+    if (e.new_value != null) return _renderVal(e.new_value);
+    // 有 extra_display 的多值事件
+    if (e.extra_display) {
+      const parts = [];
+      if (e.extra_display.ltv) parts.push(`LTV ${e.extra_display.ltv}`);
+      if (e.extra_display.liquidationThreshold) parts.push(`LT ${e.extra_display.liquidationThreshold}`);
+      if (e.extra_display.liquidationBonus) parts.push(`Bonus ${e.extra_display.liquidationBonus}`);
+      if (e.extra_display.role_name) parts.push(`role=${e.extra_display.role_name}`);
+      if (parts.length) return parts.join(" · ");
+    }
+    return "";
+  };
+
   body.innerHTML = `
     <table class="data-table">
       <thead><tr>
@@ -2622,22 +2657,27 @@ async function renderPermissions(box, pk) {
         <th>含义</th><th>旧值 → 新值</th><th>TX</th>
       </tr></thead>
       <tbody>
-      ${events.map(e => `
+      ${events.map(e => {
+        const oldStr = _pickOld(e);
+        const newStr = _pickNew(e);
+        const assetSym = e.asset ? _assetSymbol.get(String(e.asset).toLowerCase()) : null;
+        return `
         <tr>
           <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
           <td>
             <a class="addr" href="${explorerAddrUrl(pool.chain, e.contract)}" target="_blank" title="${e.contract}">${fmtAddr(e.contract)}</a>
             ${e.contract_role ? `<div style="font-size:10px;color:#64748b">${e.contract_role}</div>` : ""}
+            ${assetSym ? `<div style="font-size:10px;color:#22d3ee">(on ${assetSym})</div>` : ""}
           </td>
           <td style="color:#fb923c">${e.event}</td>
           <td>${e.description_zh || ""}</td>
           <td class="mono" style="font-size:11px">
-            ${e.old_value ? `<span style="color:#64748b">${fmtAddr(e.old_value)}</span> → ` : ""}
-            <span style="color:#facc15">${e.new_value ? fmtAddr(e.new_value) : ""}</span>
+            ${oldStr ? `<span style="color:#64748b">${oldStr}</span> → ` : ""}
+            <span style="color:#facc15">${newStr}</span>
           </td>
           <td><a class="addr" href="${explorerTxUrl(pool.chain, e.tx_hash)}" target="_blank" title="${e.tx_hash}">${fmtAddr(e.tx_hash)}</a></td>
         </tr>
-      `).join("")}
+      `;}).join("")}
       </tbody>
     </table>
   `;
