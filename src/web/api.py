@@ -614,6 +614,74 @@ async def api_alerts_recent(
     }
 
 
+# ---------- /api/alerts/summary ----------
+@app.get("/api/alerts/summary")
+async def api_alerts_summary(
+    hours: float = Query(1.0, ge=0.01, le=24.0 * 7),
+) -> dict:
+    """按 pool_key 汇总最近 N 小时未屏蔽告警数,供侧栏徽章 / 总览页用。
+
+    - 已屏蔽的 (pool_key, rule) 命中时不计入 by_pool 计数
+    - 整池屏蔽则该池 by_pool 计数全部为 0
+    - 返回 total / critical_total / muted_total 便于顶部展示
+    """
+    st = _require_state()
+    now = time.time()
+    since = now - max(0.01, hours) * 3600.0
+    rows = st.sink.get_alerts_summary_rows(since_ts=since)
+
+    # reload mutes 以反映最新
+    active_mutes = st.mute_store.list_active()
+
+    def _is_muted(pool_key: str, rule: str) -> bool:
+        for m in active_mutes:
+            if m.pool_key != pool_key:
+                continue
+            if m.rule is None:
+                return True  # 整池屏蔽
+            if m.rule == rule:
+                return True
+        return False
+
+    by_pool: dict[str, int] = {}
+    by_pool_muted: dict[str, int] = {}
+    by_level: dict[str, int] = {"info": 0, "warning": 0, "alert": 0, "critical": 0}
+    last_ts_by_pool: dict[str, float] = {}
+    total = 0
+    muted_total = 0
+
+    for r in rows:
+        pk = r.get("pool_key")
+        rule = r.get("rule") or ""
+        cnt = int(r.get("cnt") or 0)
+        level = r.get("level") or "info"
+        last_ts = float(r.get("last_ts") or 0.0)
+        if not pk:
+            continue
+        if _is_muted(pk, rule):
+            by_pool_muted[pk] = by_pool_muted.get(pk, 0) + cnt
+            muted_total += cnt
+            continue
+        by_pool[pk] = by_pool.get(pk, 0) + cnt
+        by_level[level] = by_level.get(level, 0) + cnt
+        total += cnt
+        if last_ts > last_ts_by_pool.get(pk, 0.0):
+            last_ts_by_pool[pk] = last_ts
+
+    return {
+        "ok": True,
+        "hours": hours,
+        "since_ts": since,
+        "now_ts": now,
+        "total": total,
+        "muted_total": muted_total,
+        "by_pool": by_pool,
+        "by_pool_muted": by_pool_muted,
+        "by_level": by_level,
+        "last_ts_by_pool": last_ts_by_pool,
+    }
+
+
 # ---------- /api/mutes ----------
 @app.get("/api/mutes")
 async def api_mutes_list() -> dict:

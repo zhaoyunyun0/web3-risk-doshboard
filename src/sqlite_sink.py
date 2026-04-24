@@ -269,6 +269,49 @@ class SqliteSink:
             r["metrics"] = _parse_metrics(r.get("metrics"))
         return rows
 
+    def get_alerts_count_by_pool(
+        self,
+        since_ts: float,
+        until_ts: float | None = None,
+    ) -> dict[str, int]:
+        """按 pool_key 聚合告警数量,用于侧栏徽章 / 全局总览。
+
+        since_ts / until_ts 为 Unix 秒。until_ts 默认 None = 到现在。
+        返回 dict: {pool_key: count}。不做屏蔽过滤 —— 调用方结合 MuteStore
+        自行过滤,保持这里的纯 DB 语义。
+        """
+        sql = "SELECT pool_key, COUNT(*) FROM alerts WHERE ts >= ?"
+        params: list = [float(since_ts)]
+        if until_ts is not None:
+            sql += " AND ts <= ?"
+            params.append(float(until_ts))
+        sql += " GROUP BY pool_key"
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, tuple(params))
+            return {row[0]: int(row[1]) for row in cur.fetchall()}
+
+    def get_alerts_summary_rows(
+        self,
+        since_ts: float,
+        until_ts: float | None = None,
+    ) -> list[dict]:
+        """返回 since 以来每个 (pool_key, rule) 的告警条数 + 最近时间,
+        给调用方按 rule 做屏蔽过滤后再汇总用。
+        """
+        sql = """
+            SELECT pool_key, rule, level, COUNT(*) as cnt, MAX(ts) as last_ts
+            FROM alerts WHERE ts >= ?
+        """
+        params: list = [float(since_ts)]
+        if until_ts is not None:
+            sql += " AND ts <= ?"
+            params.append(float(until_ts))
+        sql += " GROUP BY pool_key, rule, level"
+        with self._lock, self._conn:
+            cur = self._conn.execute(sql, tuple(params))
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
     def max_alert_id(self) -> int:
         with self._lock, self._conn:
             row = self._conn.execute("SELECT COALESCE(MAX(id), 0) FROM alerts").fetchone()

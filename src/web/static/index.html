@@ -1244,6 +1244,58 @@ async function refreshStatus() {
 }
 
 /* =========================================================
+   告警汇总 — 用于侧栏池子徽章 / 总览页 / "总览"入口数字
+   ========================================================= */
+async function refreshAlertSummary() {
+  const r = await api("/api/alerts/summary?hours=1");
+  if (!r || !r.ok) return;
+  state.alertSummary = r.by_pool || {};
+  state.alertSummaryMuted = r.by_pool_muted || {};
+  state.alertSummaryByLevel = r.by_level || {};
+  state.alertSummaryTotal = r.total || 0;
+  state.alertSummaryMutedTotal = r.muted_total || 0;
+  state.alertSummaryLastTs = r.last_ts_by_pool || {};
+  // 顶部总览入口徽章
+  const badge = document.getElementById("tree-overview-badge");
+  if (badge) {
+    if (r.total > 0) {
+      badge.textContent = r.total > 99 ? "99+" : String(r.total);
+      badge.style.display = "";
+    } else {
+      badge.style.display = "none";
+    }
+  }
+  // 重绘侧栏徽章(只影响 pool 节点,小开销)
+  renderTree(document.getElementById("tree-search").value);
+  // 若用户正在总览页,重绘以带入最新的告警数。但若当前正处于 dashboard
+  // 的某个交互中途(例如点了按钮),renderDashboard 里也会自己拉一次,
+  // 这里不做递归;标记 state.alertSummary 更新即可让下一次 renderTab 拿到最新值。
+  if (state.currentTab === "__dashboard__" && document.getElementById("tab-content")) {
+    // 仅局部更新"告警入口徽章"+顶部状态栏;重绘面板由其他路径触发
+    // (用户点击 / 定时 pollDashboard 触发)
+  }
+}
+
+/* 定时 refresh dashboard 面板(当用户停留在总览时,60s 重渲) */
+let _dashboardTimer = null;
+function _startDashboardTimer() {
+  if (_dashboardTimer) return;
+  _dashboardTimer = setInterval(async () => {
+    if (state.currentTab === "__dashboard__") {
+      try {
+        const box = document.getElementById("tab-content");
+        if (box) await renderDashboard(box);
+      } catch (e) { console.warn("dashboard refresh failed", e); }
+    }
+  }, 60000);
+}
+
+async function refreshMutes() {
+  const r = await api("/api/mutes");
+  if (r && r.ok) state.mutes = r.mutes || [];
+}
+
+/* =========================================================
    Pool tree
    ========================================================= */
 async function loadPools() {
@@ -1338,8 +1390,12 @@ document.getElementById("tree-search").addEventListener("input", (e) => {
    ========================================================= */
 function renderBreadcrumb() {
   const bc = document.getElementById("breadcrumb");
+  if (state.currentTab === "__dashboard__") {
+    bc.innerHTML = `<span class="current">🏠 全局总览</span><span class="sep">·</span>近 1 小时`;
+    return;
+  }
   if (!state.currentPoolKey) {
-    bc.innerHTML = "未选择池子";
+    bc.innerHTML = `<span style="cursor:pointer" onclick="goDashboard()">🏠 总览</span><span class="sep">·</span>未选择池子`;
     return;
   }
   const p = state.pools.find(x => x.pool_key === state.currentPoolKey);
@@ -1351,17 +1407,34 @@ function renderBreadcrumb() {
 }
 
 function parseHash() {
-  // #/pool/ethereum:aave_v3:USDC/activity
+  // #/pool/ethereum:aave_v3:USDC/activity  or  #/dashboard
   const h = location.hash.slice(1);
   const parts = h.split("/").filter(Boolean);
+  if (parts[0] === "dashboard") {
+    return { poolKey: null, tab: "__dashboard__" };
+  }
   if (parts[0] === "pool" && parts[1]) {
     return { poolKey: decodeURIComponent(parts[1]), tab: parts[2] || "alerts" };
   }
   return null;
 }
 function setHash(poolKey, tab) {
-  const newHash = `#/pool/${encodeURIComponent(poolKey)}/${tab}`;
+  let newHash;
+  if (tab === "__dashboard__" || !poolKey) {
+    newHash = `#/dashboard`;
+  } else {
+    newHash = `#/pool/${encodeURIComponent(poolKey)}/${tab}`;
+  }
   if (location.hash !== newHash) location.hash = newHash;
+}
+function goDashboard() {
+  state.currentTab = "__dashboard__";
+  state.currentPoolKey = null;
+  setHash(null, "__dashboard__");
+  syncTabUi();
+  renderBreadcrumb();
+  renderTree(document.getElementById("tree-search").value);
+  renderTab();
 }
 window.addEventListener("hashchange", () => {
   const r = parseHash();
@@ -1384,22 +1457,36 @@ window.addEventListener("hashchange", () => {
 document.querySelectorAll(".tab").forEach(el => {
   el.addEventListener("click", () => {
     const t = el.dataset.tab;
+    // 总览模式下点 tab 不做切换,提示先选池子
+    if (!state.currentPoolKey) {
+      showToast("请先从左侧或 Cmd/Ctrl+K 选择一个池子");
+      return;
+    }
     state.currentTab = t;
     syncTabUi();
-    if (state.currentPoolKey) setHash(state.currentPoolKey, t);
+    setHash(state.currentPoolKey, t);
     renderTab();
   });
 });
 
 function syncTabUi() {
+  const inDash = state.currentTab === "__dashboard__";
   document.querySelectorAll(".tab").forEach(el => {
-    el.classList.toggle("active", el.dataset.tab === state.currentTab);
+    el.classList.toggle("active", !inDash && el.dataset.tab === state.currentTab);
   });
+  // 总览模式下 tabs 栏淡化,提示用户要先选池子才能看子 tab
+  const tabsEl = document.getElementById("tabs");
+  if (tabsEl) tabsEl.style.opacity = inDash ? "0.4" : "1";
+  _syncOverviewEntryActive();
 }
 
-function selectPool(pk) {
+function selectPool(pk, tab) {
   state.currentPoolKey = pk;
+  // 从 dashboard 点池子 —— 默认落到告警 tab
+  if (state.currentTab === "__dashboard__") state.currentTab = tab || "alerts";
+  else if (tab) state.currentTab = tab;
   setHash(pk, state.currentTab);
+  syncTabUi();
   renderBreadcrumb();
   renderTree(document.getElementById("tree-search").value);
   renderTab();
@@ -1469,6 +1556,352 @@ function _syncOverviewEntryActive() {
   const el = document.getElementById("tree-overview-entry");
   if (!el) return;
   el.classList.toggle("active", state.currentTab === "__dashboard__");
+}
+
+/* =========================================================
+   Cmd/Ctrl+K 全局跳转面板
+   - 输入关键字,实时过滤池子 (symbol / pool_key / chain / protocol)
+   - Enter 或 点击跳转; ↑/↓ 选择; Esc 关闭
+   ========================================================= */
+let _cmdkItems = [];
+let _cmdkSelIdx = 0;
+
+function _cmdkBuildItems(q) {
+  const query = (q || "").trim().toLowerCase();
+  const items = [];
+  // 静态入口
+  if (!query || "总览".includes(query) || "home".includes(query) || "dashboard".includes(query)) {
+    items.push({
+      type: "nav", label: "🏠 全局总览", sub: "Dashboard",
+      onSelect: () => goDashboard(),
+    });
+  }
+  // 池子
+  for (const p of (state.pools || [])) {
+    const hay = [p.symbol, p.pool_key, p.chain, p.protocol].join(" ").toLowerCase();
+    if (query && !hay.includes(query)) continue;
+    const cnt = (state.alertSummary && state.alertSummary[p.pool_key]) || 0;
+    const sub = `${_chainZh(p.chain)} · ${_protocolZh(p.protocol)}${cnt > 0 ? ` · ${cnt} 告警` : ""}`;
+    items.push({
+      type: "pool",
+      label: `${p.symbol} <span style="color:var(--text-3);font-family:var(--font-mono);font-size:11px">${p.pool_key}</span>${cnt > 0 ? `<span class="agg-count">${cnt}</span>` : ""}`,
+      sub,
+      onSelect: () => selectPool(p.pool_key, "alerts"),
+    });
+  }
+  return items.slice(0, 50);
+}
+
+function _cmdkRender(q) {
+  const listEl = document.getElementById("cmdk-list");
+  if (!listEl) return;
+  _cmdkItems = _cmdkBuildItems(q);
+  if (_cmdkSelIdx >= _cmdkItems.length) _cmdkSelIdx = Math.max(0, _cmdkItems.length - 1);
+  listEl.innerHTML = _cmdkItems.map((it, i) => `
+    <div class="cmdk-item ${i === _cmdkSelIdx ? 'selected' : ''}" data-i="${i}">
+      <span>${it.label}</span>
+      <span class="cmdk-sub">${it.sub || ""}</span>
+    </div>
+  `).join("") || `<div class="empty" style="padding:16px">无匹配结果</div>`;
+  listEl.querySelectorAll(".cmdk-item").forEach(el => {
+    el.onclick = () => {
+      const i = parseInt(el.dataset.i);
+      const it = _cmdkItems[i];
+      if (it) { closeCmdK(); it.onSelect(); }
+    };
+    el.onmouseenter = () => {
+      _cmdkSelIdx = parseInt(el.dataset.i);
+      listEl.querySelectorAll(".cmdk-item").forEach((x, j) => x.classList.toggle("selected", j === _cmdkSelIdx));
+    };
+  });
+}
+
+function openCmdK() {
+  if (state.cmdkOpen) return;
+  state.cmdkOpen = true;
+  _cmdkSelIdx = 0;
+  const overlay = document.createElement("div");
+  overlay.className = "cmdk-overlay";
+  overlay.id = "cmdk-overlay";
+  overlay.innerHTML = `
+    <div class="cmdk-panel" onclick="event.stopPropagation()">
+      <input type="text" class="cmdk-input" id="cmdk-input" placeholder="搜索池子 (symbol / pool_key / chain) 或 '总览'…" autocomplete="off">
+      <div class="cmdk-list" id="cmdk-list"></div>
+      <div class="cmdk-hint">
+        <span class="cmdk-kbd">↑</span><span class="cmdk-kbd">↓</span> 选择
+        &nbsp;&nbsp;<span class="cmdk-kbd">Enter</span> 跳转
+        &nbsp;&nbsp;<span class="cmdk-kbd">Esc</span> 关闭
+      </div>
+    </div>
+  `;
+  overlay.onclick = () => closeCmdK();
+  document.body.appendChild(overlay);
+  const input = document.getElementById("cmdk-input");
+  _cmdkRender("");
+  input.focus();
+  input.addEventListener("input", (e) => {
+    _cmdkSelIdx = 0;
+    _cmdkRender(e.target.value);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      _cmdkSelIdx = Math.min(_cmdkItems.length - 1, _cmdkSelIdx + 1);
+      _cmdkRender(input.value);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      _cmdkSelIdx = Math.max(0, _cmdkSelIdx - 1);
+      _cmdkRender(input.value);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const it = _cmdkItems[_cmdkSelIdx];
+      if (it) { closeCmdK(); it.onSelect(); }
+    }
+  });
+}
+
+function closeCmdK() {
+  state.cmdkOpen = false;
+  const el = document.getElementById("cmdk-overlay");
+  if (el) el.remove();
+}
+
+/* =========================================================
+   Dashboard (__dashboard__ 虚拟 tab) — 全局总览
+   ========================================================= */
+function _utilClass(pct) {
+  if (pct == null) return "";
+  if (pct >= 99) return "w4";
+  if (pct >= 90) return "w3";
+  if (pct >= 70) return "w2";
+  return "";
+}
+
+async function renderDashboard(box) {
+  // 并行拉 recent alerts、mutes、summary
+  const [sumR, mutesR, recentR] = await Promise.all([
+    api("/api/alerts/summary?hours=1"),
+    api("/api/mutes"),
+    api("/api/alerts/recent?limit=10"),
+  ]);
+  const pools = state.pools || [];
+  const sum = (sumR && sumR.ok) ? sumR : {
+    total: 0, muted_total: 0, by_pool: {}, by_level: {}, by_pool_muted: {},
+    last_ts_by_pool: {},
+  };
+  const mutes = (mutesR && mutesR.ok && mutesR.mutes) || [];
+  const recent = (recentR && recentR.ok && recentR.alerts) || [];
+
+  // 全局统计
+  const totalTvl = pools.reduce((a, p) => a + (p.supply_usd || 0), 0);
+  const totalBorrow = pools.reduce((a, p) => a + (p.borrow_usd || 0), 0);
+  const avgUtil = pools.length ? (totalBorrow / totalTvl * 100) : 0;
+  const critical = (sum.by_level && sum.by_level.critical) || 0;
+
+  // 风险排行:按 utilization 降序;只取前 8
+  const byUtil = [...pools].sort((a, b) => (b.utilization_pct || 0) - (a.utilization_pct || 0)).slice(0, 8);
+  // 流动性紧张排行:按 available_liquidity / supply 升序,只取非零 supply 的前 8
+  const byTight = pools
+    .filter(p => (p.supply_usd || 0) > 0)
+    .map(p => ({ ...p, _tight: (p.available_liquidity_usd || 0) / p.supply_usd }))
+    .sort((a, b) => a._tight - b._tight)
+    .slice(0, 8);
+
+  const stats = `
+    <div class="dashboard-grid">
+      <div class="dash-stat">
+        <span class="lbl">监控池子</span>
+        <span class="num">${pools.length}</span>
+        <span class="sub">${new Set(pools.map(p => p.chain)).size} 链 / ${new Set(pools.map(p => p.protocol)).size} 协议</span>
+      </div>
+      <div class="dash-stat">
+        <span class="lbl">总存款 TVL</span>
+        <span class="num">${fmtUSD(totalTvl)}</span>
+        <span class="sub">总借款 ${fmtUSD(totalBorrow)}</span>
+      </div>
+      <div class="dash-stat ${avgUtil >= 90 ? 'warn' : ''}">
+        <span class="lbl">加权利用率</span>
+        <span class="num">${avgUtil.toFixed(1)}%</span>
+        <span class="sub">borrow / supply</span>
+      </div>
+      <div class="dash-stat ${critical > 0 ? 'danger' : (sum.total > 0 ? 'warn' : 'success')}">
+        <span class="lbl">激活告警 (近 1h · 未屏蔽)</span>
+        <span class="num">${sum.total || 0}</span>
+        <span class="sub">严重 ${critical} · 告警 ${(sum.by_level && sum.by_level.alert) || 0}</span>
+      </div>
+      <div class="dash-stat ${mutes.length ? 'info' : ''}">
+        <span class="lbl">当前屏蔽规则</span>
+        <span class="num">${mutes.length}</span>
+        <span class="sub">已屏蔽告警 ${sum.muted_total || 0} 条</span>
+      </div>
+    </div>
+  `;
+
+  // 告警池子 top(有告警的)
+  const hottest = Object.entries(sum.by_pool || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const hottestHtml = hottest.length === 0
+    ? `<div class="empty" style="color:var(--success);padding:20px">✅ 近 1 小时无未屏蔽告警</div>`
+    : `<table class="data-table">
+        <thead><tr>
+          <th>池子</th>
+          <th class="num">告警数 (1h)</th>
+          <th class="num">利用率</th>
+          <th class="num">可用流动性</th>
+          <th class="num">TVL</th>
+          <th>最近告警</th>
+        </tr></thead>
+        <tbody>
+        ${hottest.map(([pk, cnt]) => {
+          const p = pools.find(x => x.pool_key === pk);
+          if (!p) return "";
+          const uc = _utilClass(p.utilization_pct);
+          const lastTs = (sum.last_ts_by_pool || {})[pk];
+          return `<tr style="cursor:pointer" onclick="selectPool('${pk}', 'alerts')">
+            <td><span class="mono">${p.symbol}</span> <span style="color:var(--text-3);font-size:var(--fs-xs)">${_chainZh(p.chain)}/${_protocolZh(p.protocol)}</span></td>
+            <td class="num"><span class="pool-badge${cnt < 3 ? ' warn' : ''}" style="margin:0">${cnt}</span></td>
+            <td class="num" style="min-width:140px">
+              <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+                <span>${fmtPct(p.utilization_pct)}</span>
+                <span class="pct-bar ${uc}" style="width:60px"><span style="width:${Math.min(100, p.utilization_pct || 0)}%"></span></span>
+              </div>
+            </td>
+            <td class="num">${fmtUSD(p.available_liquidity_usd)}</td>
+            <td class="num">${fmtUSD(p.supply_usd)}</td>
+            <td title="${lastTs ? fmtAbsTime(lastTs) : ''}">${lastTs ? fmtRelTime(lastTs) : '-'}</td>
+          </tr>`;
+        }).join("")}
+        </tbody>
+      </table>`;
+
+  // 利用率 top 8
+  const utilHtml = `<table class="data-table">
+    <thead><tr>
+      <th>#</th><th>池子</th>
+      <th class="num">利用率</th>
+      <th class="num">TVL</th>
+      <th class="num">可用流动性</th>
+    </tr></thead>
+    <tbody>
+    ${byUtil.map((p, i) => {
+      const uc = _utilClass(p.utilization_pct);
+      return `<tr style="cursor:pointer" onclick="selectPool('${p.pool_key}', 'overview')">
+        <td>${i + 1}</td>
+        <td><span class="mono">${p.symbol}</span> <span style="color:var(--text-3);font-size:var(--fs-xs)">${_chainZh(p.chain)}</span></td>
+        <td class="num" style="min-width:160px">
+          <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+            <span>${fmtPct(p.utilization_pct)}</span>
+            <span class="pct-bar ${uc}" style="width:80px"><span style="width:${Math.min(100, p.utilization_pct || 0)}%"></span></span>
+          </div>
+        </td>
+        <td class="num">${fmtUSD(p.supply_usd)}</td>
+        <td class="num">${fmtUSD(p.available_liquidity_usd)}</td>
+      </tr>`;
+    }).join("")}
+    </tbody></table>`;
+
+  // 流动性紧张 top 8
+  const tightHtml = `<table class="data-table">
+    <thead><tr>
+      <th>#</th><th>池子</th>
+      <th class="num">可用/TVL</th>
+      <th class="num">可用流动性</th>
+      <th class="num">借款</th>
+    </tr></thead>
+    <tbody>
+    ${byTight.map((p, i) => {
+      const tightPct = p._tight * 100;
+      const uc = tightPct < 1 ? "w4" : (tightPct < 5 ? "w3" : (tightPct < 10 ? "w2" : ""));
+      return `<tr style="cursor:pointer" onclick="selectPool('${p.pool_key}', 'overview')">
+        <td>${i + 1}</td>
+        <td><span class="mono">${p.symbol}</span> <span style="color:var(--text-3);font-size:var(--fs-xs)">${_chainZh(p.chain)}</span></td>
+        <td class="num" style="min-width:160px">
+          <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+            <span>${tightPct.toFixed(2)}%</span>
+            <span class="pct-bar ${uc}" style="width:80px"><span style="width:${Math.min(100, tightPct)}%"></span></span>
+          </div>
+        </td>
+        <td class="num">${fmtUSD(p.available_liquidity_usd)}</td>
+        <td class="num">${fmtUSD(p.borrow_usd)}</td>
+      </tr>`;
+    }).join("")}
+    </tbody></table>`;
+
+  // 当前屏蔽规则表
+  const mutesHtml = mutes.length === 0
+    ? `<div class="empty" style="padding:16px">当前无激活屏蔽</div>`
+    : `<table class="data-table">
+        <thead><tr>
+          <th>池子</th><th>规则</th><th>到期</th><th>原因</th><th></th>
+        </tr></thead>
+        <tbody>
+        ${mutes.map(m => `
+          <tr>
+            <td><span class="mono" style="cursor:pointer" onclick="selectPool('${m.pool_key}', 'overview')">${m.pool_key}</span></td>
+            <td>${m.rule ? `<code style="color:var(--warn)">${m.rule}</code>` : `<span style="color:var(--warning-y)">整池</span>`}</td>
+            <td>${m.human_until || "永久"}</td>
+            <td style="color:var(--text-2)">${m.reason || "(无)"}</td>
+            <td><button class="btn-ghost-danger dash-mute-undo" data-pk="${m.pool_key}" data-rule="${m.rule || ''}">取消</button></td>
+          </tr>
+        `).join("")}
+        </tbody></table>`;
+
+  // 最近 10 条告警(全局,供快速浏览)
+  const recentHtml = recent.length === 0
+    ? `<div class="empty" style="padding:16px;color:var(--success)">✅ 暂无最近告警</div>`
+    : `<table class="data-table">
+        <thead><tr>
+          <th style="width:100px">时间</th>
+          <th style="width:64px">级别</th>
+          <th style="width:220px">池子</th>
+          <th>消息</th>
+        </tr></thead>
+        <tbody>
+        ${recent.map(a => `
+          <tr style="cursor:pointer" onclick="selectPool('${a.pool_key || ''}', 'alerts')" class="level-row-${a.level}">
+            <td title="${fmtAbsTime(a.ts)}">${fmtRelTime(a.ts)}</td>
+            <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
+            <td class="mono" style="font-size:11px">${a.pool_key || ""}</td>
+            <td>${fmtAlertMessage(a.message)}</td>
+          </tr>
+        `).join("")}
+        </tbody></table>`;
+
+  box.innerHTML = `
+    ${stats}
+    <div class="section-title">🔥 告警最多的池子 <span class="count">近 1h · 未屏蔽</span></div>
+    ${hottestHtml}
+    <div class="section-title">📈 利用率 TOP · 可能接近爆仓阈值</div>
+    ${utilHtml}
+    <div class="section-title">💧 流动性紧张 TOP · 可用流动性 / TVL 最小</div>
+    ${tightHtml}
+    <div class="section-title">🔕 当前屏蔽规则 <span class="count">${mutes.length}</span></div>
+    ${mutesHtml}
+    <div class="section-title">📢 最近告警 <span class="count">全部</span></div>
+    ${recentHtml}
+  `;
+
+  // 绑定屏蔽取消按钮
+  box.querySelectorAll(".dash-mute-undo").forEach(b => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const pk = b.dataset.pk;
+      const rule = b.dataset.rule || null;
+      if (!confirm(rule ? `取消屏蔽规则 ${rule} ?` : `取消整池 ${pk} 的屏蔽?`)) return;
+      b.disabled = true;
+      b.textContent = "处理中…";
+      const resp = await apiRemoveMute(pk, rule);
+      if (resp.ok) {
+        await refreshAlertSummary();
+      } else {
+        alert("取消失败: " + (resp.error || ""));
+        b.disabled = false;
+        b.textContent = "取消";
+      }
+    };
+  });
 }
 
 /* =========================================================
@@ -2131,8 +2564,29 @@ async function renderAlerts(box, pk) {
   );
 
   const nowSec = Date.now() / 1000;
-  const rowsHtml = alerts.map((a, i) => {
+
+  // --- 聚合:同 rule + 同 level 在 60s 窗内的告警合并为一组 ---
+  const AGG_WINDOW_SEC = 60;
+  const groups = []; // {head: alert, items: [alert,...]}
+  const sortedAlerts = [...alerts].sort((a, b) => b.ts - a.ts);
+  for (const a of sortedAlerts) {
+    const last = groups[groups.length - 1];
+    if (last
+        && last.head.rule === a.rule
+        && last.head.level === a.level
+        && Math.abs(last.head.ts - a.ts) <= AGG_WINDOW_SEC
+        && (last.items[last.items.length - 1].ts - a.ts) <= AGG_WINDOW_SEC) {
+      last.items.push(a);
+      continue;
+    }
+    groups.push({ head: a, items: [a] });
+  }
+
+  const rowsHtml = groups.map((g, i) => {
+    const a = g.head;
+    const n = g.items.length;
     const mute = a.rule ? findMute(a.rule) : null;
+    const aggBadge = n > 1 ? `<span class="agg-count" title="60s 内同规则重复 ${n} 次">×${n}</span>` : "";
     let actionCell = `<button class="expand-btn" data-i="${i}">展开</button>`;
     if (a.rule) {
       if (mute) {
@@ -2147,17 +2601,19 @@ async function renderAlerts(box, pk) {
         actionCell += ` <button class="mute-rule-inline btn-ghost-warn" data-rule="${a.rule}" data-pk="${pk}" title="屏蔽这条规则 7 天">🔕 屏蔽 7d</button>`;
       }
     }
+    // 展开区:如果 group 有多条,列出每一条的时间 + metrics;否则展示 head metrics
+    const detailBody = n > 1
+      ? g.items.map(it => `<div style="margin-bottom:6px"><span style="color:var(--accent)">${fmtAbsTime(it.ts)}</span>  ${JSON.stringify(it.metrics || {})}</div>`).join("")
+      : JSON.stringify(a.metrics || {}, null, 2);
     return `
       <tr class="level-row-${a.level}">
-        <td title="${fmtAbsTime(a.ts)}">${fmtRelTime(a.ts)}</td>
+        <td title="${fmtAbsTime(a.ts)}">${fmtRelTime(a.ts)}${n > 1 ? `<div style="color:var(--text-3);font-size:10px">首次 ${fmtRelTime(g.items[g.items.length - 1].ts)}</div>` : ""}</td>
         <td><span class="level-tag level-${a.level}">${a.level_zh || a.level}</span></td>
-        <td class="mono" style="font-size:11px;color:#94a3b8">${a.rule || ""}</td>
+        <td class="mono" style="font-size:11px;color:var(--text-2)">${a.rule || ""}${aggBadge}</td>
         <td>${fmtAlertMessage(a.message)}</td>
         <td>${actionCell}</td>
       </tr>
-      <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${
-        JSON.stringify(a.metrics || {}, null, 2)
-      }</td></tr>
+      <tr class="metrics-row" id="metrics-${i}" style="display:none"><td colspan="5">${detailBody}</td></tr>
     `;
   }).join("");
 
@@ -2227,17 +2683,32 @@ function renderAlertStream() {
   const body = document.getElementById("alert-stream-body");
   const alerts = state.alertStream || [];
   if (alerts.length === 0) {
-    body.innerHTML = `<div class="empty" style="padding:16px;color:#4ade80">✅ 暂无最近告警</div>`;
+    body.innerHTML = `<div class="empty" style="padding:16px;color:var(--success)">✅ 暂无最近告警</div>`;
     return;
   }
-  body.innerHTML = alerts.map(a => `
+  // 聚合:同 pool_key + rule + level 在 60s 内合并为一条
+  const AGG = 60;
+  const groups = [];
+  for (const a of alerts) {
+    const key = `${a.pool_key}|${a.rule}|${a.level}`;
+    const last = groups[groups.length - 1];
+    if (last && last.key === key && Math.abs(last.head.ts - a.ts) <= AGG) {
+      last.count += 1;
+      continue;
+    }
+    groups.push({ key, head: a, count: 1 });
+  }
+  body.innerHTML = groups.map(g => {
+    const a = g.head;
+    const cntBadge = g.count > 1 ? `<span class="agg-count" title="60s 内重复 ${g.count} 次">×${g.count}</span>` : "";
+    return `
     <div class="alert-row level-row-${a.level}" data-pk="${a.pool_key || ""}">
       <span class="ts" title="${fmtAbsTime(a.ts)}">${fmtRelTime(a.ts)}</span>
       <span class="level-tag level-${a.level}">${a.level_zh || a.level}</span>
-      <span class="pool mono">${a.pool_key || ""}</span>
+      <span class="pool mono">${a.pool_key || ""}${cntBadge}</span>
       <span class="msg">${fmtAlertMessage(a.message)}</span>
     </div>
-  `).join("");
+  `; }).join("");
   body.querySelectorAll(".alert-row").forEach(row => {
     row.onclick = () => {
       const pk = row.dataset.pk;
@@ -2394,12 +2865,37 @@ async function boot() {
     state.currentPoolKey = r.poolKey;
     state.currentTab = r.tab;
     syncTabUi();
+  } else {
+    // 无 hash —— 默认进总览,而不是空白"请选择池子"
+    state.currentTab = "__dashboard__";
+    state.currentPoolKey = null;
   }
   // initial REST fetch so the UI paints immediately even if WS takes a beat
   await Promise.all([refreshStatus(), loadPools(), refreshAlertStream(), renderHiddenPoolsPanel()]);
+  // 先拉告警汇总,这样 renderTree 就能直接把徽章画上
+  await refreshAlertSummary();
   renderBreadcrumb();
   renderTree();
+  syncTabUi();
   renderTab();
+  // 绑定 "总览" 入口点击
+  const oe = document.getElementById("tree-overview-entry");
+  if (oe) oe.onclick = () => goDashboard();
+  // 侧栏告警徽章每 45s 刷新
+  setInterval(() => { refreshAlertSummary().catch(() => {}); }, 45000);
+  // dashboard 面板若用户在看,每 60s 重绘
+  _startDashboardTimer();
+  // 顶栏 🔍 按钮 + 全局 Cmd/Ctrl+K
+  const cmdkBtn = document.getElementById("cmdk-btn");
+  if (cmdkBtn) cmdkBtn.onclick = () => openCmdK();
+  window.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      if (state.cmdkOpen) closeCmdK(); else openCmdK();
+    } else if (e.key === "Escape" && state.cmdkOpen) {
+      closeCmdK();
+    }
+  });
   // switch status + alert stream from polling to WebSocket server-push
   connectWs();
 }
