@@ -286,6 +286,14 @@ EVENT_ZH: dict[str, str] = {
     "LiquidationCall": "清算",
 }
 
+EVENT_EN: dict[str, str] = {
+    "Supply": "Supply",
+    "Withdraw": "Withdraw",
+    "Borrow": "Borrow",
+    "Repay": "Repay",
+    "LiquidationCall": "Liquidation",
+}
+
 PERMISSION_EVENT_ZH: dict[str, str] = {
     "PoolUpdated":             "Pool 合约地址被更新",
     "PoolConfiguratorUpdated": "PoolConfigurator 合约被更新",
@@ -302,4 +310,22 @@ PERMISSION_EVENT_ZH: dict[str, str] = {
     "BeaconUpgraded":          "Beacon 代理已升级",
     "Paused":                  "合约已暂停",
     "Unpaused":                "合约已恢复",
+}
+
+PERMISSION_EVENT_EN: dict[str, str] = {
+    "PoolUpdated":             "Pool contract address updated",
+    "PoolConfiguratorUpdated": "PoolConfigurator contract updated",
+    "PriceOracleUpdated":      "Price oracle updated",
+    "ACLManagerUpdated":       "ACLManager contract updated",
+    "ACLAdminUpdated":         "ACL admin updated",
+    "PoolDataProviderUpdated": "PoolDataProvider contract updated",
+    "ProxyCreated":            "Proxy contract created",
+    "AddressSet":              "Address entry set",
+    "AddressSetAsProxy":       "Address set as proxy (new impl)",
+    "OwnershipTransferred":    "Ownership transferred",
+    "AdminChanged":            "Proxy admin changed",
+    "Upgraded":                "Proxy upgraded (new implementation)",
+    "BeaconUpgraded":          "Beacon proxy upgraded",
+    "Paused":                  "Contract paused",
+    "Unpaused":                "Contract unpaused",
 }

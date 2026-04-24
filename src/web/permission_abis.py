@@ -280,6 +280,40 @@ POOL_PROXY_EVENT_ZH: dict[str, str] = {
     "AdminChanged": "Pool 代理管理员变更",
 }
 
+# ---------- 英文版(与上面 _ZH 一一对应) ----------
+POOL_CONFIGURATOR_EVENT_EN: dict[str, str] = {
+    "CollateralConfigurationChanged":      "Collateral config changed (LTV / liq. threshold / bonus)",
+    "SupplyCapChanged":                    "Supply cap changed",
+    "BorrowCapChanged":                    "Borrow cap changed",
+    "ReserveInterestRateStrategyChanged":  "Interest rate strategy replaced",
+    "ReserveFactorChanged":                "Reserve factor changed",
+    "ReserveFrozen":                       "Reserve frozen/unfrozen",
+    "ReservePaused":                       "Reserve paused/unpaused",
+    "ReserveActive":                       "Reserve activated/deactivated",
+    "ReserveBorrowing":                    "Borrowing enabled/disabled",
+    "ReserveFlashLoaning":                 "Flash loan enabled/disabled",
+    "LiquidationProtocolFeeChanged":       "Liquidation protocol fee changed",
+    "DebtCeilingChanged":                  "Debt ceiling (isolation mode) changed",
+    "BorrowableInIsolationChanged":        "Borrowable in isolation changed",
+    "EModeAssetCategoryChanged":           "Asset eMode category changed",
+    "EModeCategoryAdded":                  "eMode category added",
+    "ReserveDropped":                      "Reserve dropped",
+    "ReserveInitialized":                  "Reserve initialized",
+    "SiloedBorrowingChanged":              "Siloed borrowing toggled",
+    "UnbackedMintCapChanged":              "Unbacked mint cap changed",
+}
+
+ACL_MANAGER_EVENT_EN: dict[str, str] = {
+    "RoleGranted":      "Role granted",
+    "RoleRevoked":      "Role revoked",
+    "RoleAdminChanged": "Role admin changed",
+}
+
+POOL_PROXY_EVENT_EN: dict[str, str] = {
+    "Upgraded":     "Pool upgraded (new implementation)",
+    "AdminChanged": "Pool proxy admin changed",
+}
+
 
 # ---------- 一些常用 ACLManager role hash (OZ AccessControl 用 keccak256("NAME")) ----------
 # DEFAULT_ADMIN_ROLE 是全 0 的 bytes32,其它角色是 keccak256(text=roleName).
@@ -359,63 +393,83 @@ def _fmt_debt_ceiling(raw: str | int | None) -> str | None:
     return _fmt_usd_compact(v / 100)
 
 
-def _fmt_bool_zh(raw: str | bool | None, *, true_zh: str = "是", false_zh: str = "否") -> str | None:
+def _fmt_bool_i18n(raw: str | bool | None, *, true_txt: str, false_txt: str) -> str | None:
     if raw is None:
         return None
     s = str(raw).lower()
     if s in ("true", "1"):
-        return true_zh
+        return true_txt
     if s in ("false", "0"):
-        return false_zh
+        return false_txt
     return str(raw)
 
 
-def format_event_display(event_name: str, old_value, new_value, extra: dict | None) -> tuple[str | None, str | None, dict | None]:
+# 向后兼容别名(旧调用方仍可用)
+def _fmt_bool_zh(raw: str | bool | None, *, true_zh: str = "是", false_zh: str = "否") -> str | None:
+    return _fmt_bool_i18n(raw, true_txt=true_zh, false_txt=false_zh)
+
+
+# 中英文 bool 标签映射,按事件类型查
+_BOOL_LABELS = {
+    "ReservePaused":              {"zh": ("已暂停", "已恢复"),   "en": ("Paused", "Unpaused")},
+    "ReserveFrozen":              {"zh": ("已冻结", "已解冻"),   "en": ("Frozen", "Unfrozen")},
+    "ReserveActive":              {"zh": ("已启用", "已停用"),   "en": ("Active", "Inactive")},
+    "_default":                   {"zh": ("是", "否"),          "en": ("Yes", "No")},
+}
+
+
+def format_event_display(
+    event_name: str,
+    old_value,
+    new_value,
+    extra: dict | None,
+    lang: str = "zh",
+) -> tuple[str | None, str | None, dict | None]:
     """按事件类型把 old/new 原始字符串值转成人类可读字符串。
 
+    lang: 'zh' 中文, 'en' 英文。bps/数字/金额格式不随语言变,只有文字类
+    (bool 标签、多值事件的组合描述)需要翻。
+
     Returns: (old_display, new_display, extra_display)
-      - old_display/new_display: 人类可读(如 '$1.5B' / '83.00%' / '是'/'否'),
-        若为 None 则前端 fallback 到 fmtAddr。
-      - extra_display: 对 CollateralConfigurationChanged 这类多值事件,
-        给出 ltv/liquidationThreshold/liquidationBonus 的百分比版本。
+      - old_display/new_display: 人类可读,None 时前端 fallback 到 fmtAddr
+      - extra_display: 多值事件(如 CollateralConfigurationChanged)的详细字段
     """
     od: str | None = None
     nd: str | None = None
     extra_display: dict | None = None
+    is_en = lang == "en"
 
-    # --- Cap 类:token 数量(带千分位) ---
+    # --- Cap 类:token 数量(带千分位) — 与语言无关 ---
     if event_name in ("SupplyCapChanged", "BorrowCapChanged", "UnbackedMintCapChanged"):
         od = _fmt_token_amount(old_value)
         nd = _fmt_token_amount(new_value)
 
-    # --- DebtCeiling: USD with 2 decimals ---
+    # --- DebtCeiling: USD with 2 decimals — 与语言无关 ---
     elif event_name == "DebtCeilingChanged":
         od = _fmt_debt_ceiling(old_value)
         nd = _fmt_debt_ceiling(new_value)
 
-    # --- bps(万分比) → 百分比 ---
+    # --- bps(万分比) → 百分比 — 与语言无关 ---
     elif event_name in ("ReserveFactorChanged", "LiquidationProtocolFeeChanged"):
         od = _fmt_bps_pct(old_value)
         nd = _fmt_bps_pct(new_value)
 
-    # --- Boolean 事件 ---
-    elif event_name == "ReservePaused":
-        nd = _fmt_bool_zh(new_value, true_zh="已暂停", false_zh="已恢复")
-    elif event_name == "ReserveFrozen":
-        nd = _fmt_bool_zh(new_value, true_zh="已冻结", false_zh="已解冻")
-    elif event_name == "ReserveActive":
-        nd = _fmt_bool_zh(new_value, true_zh="已启用", false_zh="已停用")
+    # --- Boolean 事件(需多语言) ---
+    elif event_name in ("ReservePaused", "ReserveFrozen", "ReserveActive"):
+        labels = _BOOL_LABELS[event_name]["en" if is_en else "zh"]
+        nd = _fmt_bool_i18n(new_value, true_txt=labels[0], false_txt=labels[1])
     elif event_name in ("ReserveBorrowing", "ReserveFlashLoaning",
                         "BorrowableInIsolationChanged", "SiloedBorrowingChanged"):
-        od = _fmt_bool_zh(old_value)
-        nd = _fmt_bool_zh(new_value)
+        labels = _BOOL_LABELS["_default"]["en" if is_en else "zh"]
+        od = _fmt_bool_i18n(old_value, true_txt=labels[0], false_txt=labels[1])
+        nd = _fmt_bool_i18n(new_value, true_txt=labels[0], false_txt=labels[1])
 
-    # --- eMode 分类号 ---
+    # --- eMode 分类号 — 与语言无关 ---
     elif event_name == "EModeAssetCategoryChanged":
         od = f"#{old_value}" if old_value not in (None, "None", "") else None
         nd = f"#{new_value}" if new_value not in (None, "None", "") else None
 
-    # --- CollateralConfigurationChanged / EModeCategoryAdded: 多值 ---
+    # --- CollateralConfigurationChanged / EModeCategoryAdded: 多值组合 ---
     elif event_name in ("CollateralConfigurationChanged", "EModeCategoryAdded"):
         if extra:
             extra_display = {
@@ -423,31 +477,29 @@ def format_event_display(event_name: str, old_value, new_value, extra: dict | No
                 "liquidationThreshold": _fmt_bps_pct(extra.get("liquidationThreshold")),
                 "liquidationBonus": _fmt_bps_pct(extra.get("liquidationBonus")),
             }
-            # 合成一个 new_display 便于前端单列展示
             parts = []
             if extra_display.get("ltv"):
                 parts.append(f"LTV {extra_display['ltv']}")
             if extra_display.get("liquidationThreshold"):
-                parts.append(f"清算门槛 {extra_display['liquidationThreshold']}")
+                label = "Liq. Threshold" if is_en else "清算门槛"
+                parts.append(f"{label} {extra_display['liquidationThreshold']}")
             if extra_display.get("liquidationBonus"):
-                parts.append(f"清算奖金 {extra_display['liquidationBonus']}")
+                label = "Liq. Bonus" if is_en else "清算奖金"
+                parts.append(f"{label} {extra_display['liquidationBonus']}")
             if parts:
                 nd = " · ".join(parts)
 
-    # --- ACL RoleGranted/Revoked/AdminChanged: 角色 bytes32 → 可读名 ---
+    # --- ACL RoleGranted/Revoked: new_value 是 account 地址,保留原值 ---
     elif event_name in ("RoleGranted", "RoleRevoked"):
-        # new_value 就是 account 地址,保留原值让前端 fmtAddr
         pass
     elif event_name == "RoleAdminChanged":
-        # old/new 是 bytes32 role hash
+        # role bytes32 → 可读名(英文角色名本来就是英文,语言不变)
         if old_value:
             od = ACL_ROLE_NAMES.get(str(old_value).lower(), str(old_value))
         if new_value:
             nd = ACL_ROLE_NAMES.get(str(new_value).lower(), str(new_value))
 
-    # --- 地址类(Upgraded / AdminChanged / ReserveInterestRateStrategyChanged
-    #     / PoolAddressesProvider 各种 AddressSet):不生成 display,
-    #     前端自动走 fmtAddr。
+    # --- 地址类:不生成 display,前端走 fmtAddr ---
     else:
         pass
 

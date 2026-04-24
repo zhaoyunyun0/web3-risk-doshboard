@@ -1176,16 +1176,27 @@ const I18N = {
 
     /* Permissions */
     perm_pool_not_found: "未找到池子信息",
+    pool_not_found: "未找到池子信息",
     perm_header: "协议级别权限事件 · {0} / {1}",
+    perm_loading: "正在扫 RPC 日志获取权限事件…",
+    perm_loading_hint: "预期耗时 {0}(首次) · 已用",
     perm_scanning: "🔄 正在扫 RPC 日志获取权限事件…",
     perm_scan_meta: "预期耗时 {0}(首次) · 已用 {1} 秒 · 之后会缓存",
     perm_scan_unit_long: "15–40 秒",
     perm_scan_unit_mid: "10–25 秒",
     perm_scan_unit_short: "5–15 秒",
     perm_unavail: "数据不可用: {0}",
+    data_unavailable: "数据不可用: {0}",
+    perm_empty: "✅ 近 {0} 无权限变更（正常）",
     perm_empty_ok: "✅ 近 {0}无权限变更（正常）",
     perm_range_24h: "24 小时", perm_range_3d: "3 天", perm_range_7d: "7 天",
     perm_on_asset: "(on {0})",
+    perm_th_time: "时间",
+    perm_th_contract: "合约",
+    perm_th_event: "事件",
+    perm_th_meaning: "含义",
+    perm_th_oldnew: "旧值 → 新值",
+    perm_th_tx: "TX",
 
     /* Alerts tab */
     al_no_history: "✅ 无历史告警",
@@ -1376,16 +1387,27 @@ const I18N = {
     hol_unavail: "Unavailable: {0}",
 
     perm_pool_not_found: "Pool not found",
+    pool_not_found: "Pool not found",
     perm_header: "Protocol-level permission events · {0} / {1}",
+    perm_loading: "Scanning RPC logs for permission events…",
+    perm_loading_hint: "Expected {0} (first time) · elapsed",
     perm_scanning: "🔄 Scanning RPC logs for permission events…",
     perm_scan_meta: "Expected {0} (first time) · elapsed {1}s · cached afterwards",
     perm_scan_unit_long: "15–40s",
     perm_scan_unit_mid: "10–25s",
     perm_scan_unit_short: "5–15s",
     perm_unavail: "Unavailable: {0}",
+    data_unavailable: "Unavailable: {0}",
+    perm_empty: "✅ No permission changes in the last {0} (OK)",
     perm_empty_ok: "✅ No permission changes in the last {0} (OK)",
     perm_range_24h: "24 hours", perm_range_3d: "3 days", perm_range_7d: "7 days",
     perm_on_asset: "(on {0})",
+    perm_th_time: "Time",
+    perm_th_contract: "Contract",
+    perm_th_event: "Event",
+    perm_th_meaning: "Meaning",
+    perm_th_oldnew: "Old → New",
+    perm_th_tx: "TX",
 
     al_no_history: "✅ No alert history",
     al_unavail: "Unavailable: {0}",
@@ -1449,13 +1471,19 @@ function t(key, ...args) {
    ========================================================= */
 const CHAIN_ZH = {
   ethereum: "以太坊", arbitrum: "Arbitrum", optimism: "Optimism",
-  base: "Base", polygon: "Polygon", avalanche: "Avalanche",
+  base: "Base", polygon: "Polygon", avalanche: "Avalanche", avaxc: "Avalanche C",
+  bnb: "BNB Chain", gnosis: "Gnosis", katana: "Katana"
+};
+const CHAIN_EN = {
+  ethereum: "Ethereum", arbitrum: "Arbitrum", optimism: "Optimism",
+  base: "Base", polygon: "Polygon", avalanche: "Avalanche", avaxc: "Avalanche C",
   bnb: "BNB Chain", gnosis: "Gnosis", katana: "Katana"
 };
 const PROTOCOL_ZH = {
   aave_v3: "Aave v3", compound_v3: "Compound v3", morpho_blue: "Morpho Blue",
   spark: "Spark", venus: "Venus", radiant: "Radiant"
 };
+const PROTOCOL_EN = PROTOCOL_ZH;  // 协议名本来就是英文,两语言一致
 const EXPLORER_TX = {
   ethereum: "https://etherscan.io/tx/", arbitrum: "https://arbiscan.io/tx/",
   optimism: "https://optimistic.etherscan.io/tx/", base: "https://basescan.org/tx/",
@@ -1468,8 +1496,16 @@ const EXPLORER_ADDR = {
   polygon: "https://polygonscan.com/address/", avalanche: "https://snowtrace.io/address/",
   bnb: "https://bscscan.com/address/", gnosis: "https://gnosisscan.io/address/"
 };
-function _chainZh(c) { return CHAIN_ZH[c] || c; }
-function _protocolZh(p) { return PROTOCOL_ZH[p] || p; }
+function _chainZh(c) {
+  const lang = (state && state.lang) || "zh";
+  const map = lang === "en" ? CHAIN_EN : CHAIN_ZH;
+  return map[c] || c;
+}
+function _protocolZh(p) {
+  const lang = (state && state.lang) || "zh";
+  const map = lang === "en" ? PROTOCOL_EN : PROTOCOL_ZH;
+  return map[p] || p;
+}
 function explorerTxUrl(chain, hash) {
   return (EXPLORER_TX[chain] || "https://etherscan.io/tx/") + hash;
 }
@@ -1521,8 +1557,15 @@ function fmtAddr(addr) {
 function fmtRelTime(ts) {
   if (!ts) return "";
   const diff = Date.now()/1000 - ts;
-  if (diff < 60) return Math.floor(diff) + " 秒前";
-  if (diff < 3600) return Math.floor(diff/60) + " 分钟前";
+  const isEn = (state && state.lang) === "en";
+  if (isEn) {
+    if (diff < 60)    return Math.floor(diff) + "s ago";
+    if (diff < 3600)  return Math.floor(diff/60) + "m ago";
+    if (diff < 86400) return Math.floor(diff/3600) + "h ago";
+    return Math.floor(diff/86400) + "d ago";
+  }
+  if (diff < 60)    return Math.floor(diff) + " 秒前";
+  if (diff < 3600)  return Math.floor(diff/60) + " 分钟前";
   if (diff < 86400) return Math.floor(diff/3600) + " 小时前";
   return Math.floor(diff/86400) + " 天前";
 }
@@ -2954,7 +2997,7 @@ async function renderActivity(box, pk) {
           : fmtNum(e.amount_token, 4);
         return `<tr class="${rowClass}">
           <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
-          <td>${icon} ${e.event_zh || e.event}</td>
+          <td>${icon} ${(state.lang === "en" ? e.event_en : e.event_zh) || e.event}</td>
           <td><a class="addr" href="${explorerAddrUrl(chain, e.user)}" target="_blank" title="${e.user}">${fmtAddr(e.user)}</a></td>
           <td class="num">${fmtUSD(e.amount_usd)}</td>
           <td class="num">${tokenCell}</td>
@@ -3094,15 +3137,16 @@ async function renderHolders(box, pk) {
 async function renderPermissions(box, pk) {
   const pool = state.pools.find(x => x.pool_key === pk);
   if (!pool) {
-    box.innerHTML = `<div class="error">未找到池子信息</div>`;
+    box.innerHTML = `<div class="error">${t("pool_not_found")}</div>`;
     return;
   }
+  const isEn = (state && state.lang) === "en";
   // 默认查时间窗可切换 — 7d 需扫 RPC 日志 ~40k block,耗时 15-40s(首次),
   // 之后吃 permissions_cache。24h 是 24h 需 3k block,约 10-15s
   const hours = state.permHours || 168;
   box.innerHTML = `
     <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:8px">
-      <div style="font-size:12px;color:var(--text-2,#94a3b8)">协议级别权限事件 · ${_protocolZh(pool.protocol)} / ${_chainZh(pool.chain)}</div>
+      <div style="font-size:12px;color:var(--text-2,#94a3b8)">${t("perm_header", _protocolZh(pool.protocol), _chainZh(pool.chain))}</div>
       <div class="range-switcher" id="perm-range" style="margin-left:auto">
         ${[24,72,168].map(h => {
           const lbl = h===168 ? "7d" : h===72 ? "3d" : "24h";
@@ -3118,11 +3162,15 @@ async function renderPermissions(box, pk) {
   // 进度感强的加载态:skeleton + 计时器 + 提示文案
   const body = document.getElementById("perm-body");
   const startTs = Date.now();
-  const expectSec = hours >= 168 ? "15–40 秒" : hours >= 72 ? "10–25 秒" : "5–15 秒";
+  const expectSec = hours >= 168
+    ? (isEn ? "15–40s" : "15–40 秒")
+    : hours >= 72
+    ? (isEn ? "10–25s" : "10–25 秒")
+    : (isEn ? "5–15s" : "5–15 秒");
   body.innerHTML = `
     <div style="padding:16px;background:var(--bg-1,#0f172a);border:1px solid var(--bg-2,#1e293b);border-radius:6px;margin-bottom:12px">
-      <div style="color:var(--text-0,#e2e8f0);font-size:13px;margin-bottom:4px">🔄 正在扫 RPC 日志获取权限事件…</div>
-      <div style="color:var(--text-2,#94a3b8);font-size:12px">预期耗时 ${expectSec}(首次) · 已用 <span id="perm-elapsed">0</span> 秒 · 之后会缓存</div>
+      <div style="color:var(--text-0,#e2e8f0);font-size:13px;margin-bottom:4px">🔄 ${t("perm_loading")}</div>
+      <div style="color:var(--text-2,#94a3b8);font-size:12px">${t("perm_loading_hint", expectSec)} <span id="perm-elapsed">0</span>${isEn ? "s" : " 秒"}${isEn ? " · cached afterwards" : " · 之后会缓存"}</div>
     </div>
     <div class="skeleton" style="height:36px;margin-bottom:6px"></div>
     <div class="skeleton" style="height:36px;margin-bottom:6px"></div>
@@ -3136,13 +3184,17 @@ async function renderPermissions(box, pk) {
   const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=${hours}`);
   clearInterval(elapsedTimer);
   if (!r.ok) {
-    body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
+    body.innerHTML = `<div class="notice-warning">${t("data_unavailable", r.error || "")}</div>`;
     return;
   }
   const events = r.events || [];
-  const hoursLbl = hours >= 168 ? "7 天" : hours >= 72 ? "3 天" : "24 小时";
+  const hoursLbl = hours >= 168
+    ? (isEn ? "7 days" : "7 天")
+    : hours >= 72
+    ? (isEn ? "3 days" : "3 天")
+    : (isEn ? "24 hours" : "24 小时");
   if (events.length === 0) {
-    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 ${hoursLbl}无权限变更（正常）</div>`;
+    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">${t("perm_empty", hoursLbl)}</div>`;
     return;
   }
   // asset 地址 → symbol 映射(从 state.pools 反查,避免后端加 RPC 调用)
@@ -3164,17 +3216,23 @@ async function renderPermissions(box, pk) {
     }
     return s;
   };
-  const _pickOld = (e) => e.old_display ?? (e.old_value != null ? _renderVal(e.old_value) : "");
+  // 多语言选 display 字段:优先 _zh/_en,fallback 到老 old_display/new_display
+  const _pickOld = (e) => {
+    const d = isEn ? (e.old_display_en ?? e.old_display) : (e.old_display_zh ?? e.old_display);
+    if (d != null) return d;
+    return e.old_value != null ? _renderVal(e.old_value) : "";
+  };
   const _pickNew = (e) => {
-    if (e.new_display != null) return e.new_display;
+    const d = isEn ? (e.new_display_en ?? e.new_display) : (e.new_display_zh ?? e.new_display);
+    if (d != null) return d;
     if (e.new_value != null) return _renderVal(e.new_value);
-    // 有 extra_display 的多值事件
-    if (e.extra_display) {
+    const extra = isEn ? (e.extra_display_en ?? e.extra_display) : (e.extra_display_zh ?? e.extra_display);
+    if (extra) {
       const parts = [];
-      if (e.extra_display.ltv) parts.push(`LTV ${e.extra_display.ltv}`);
-      if (e.extra_display.liquidationThreshold) parts.push(`LT ${e.extra_display.liquidationThreshold}`);
-      if (e.extra_display.liquidationBonus) parts.push(`Bonus ${e.extra_display.liquidationBonus}`);
-      if (e.extra_display.role_name) parts.push(`role=${e.extra_display.role_name}`);
+      if (extra.ltv) parts.push(`LTV ${extra.ltv}`);
+      if (extra.liquidationThreshold) parts.push(`LT ${extra.liquidationThreshold}`);
+      if (extra.liquidationBonus) parts.push(`Bonus ${extra.liquidationBonus}`);
+      if (extra.role_name) parts.push(`role=${extra.role_name}`);
       if (parts.length) return parts.join(" · ");
     }
     return "";
@@ -3183,14 +3241,15 @@ async function renderPermissions(box, pk) {
   body.innerHTML = `
     <table class="data-table">
       <thead><tr>
-        <th>时间</th><th>合约</th><th>事件</th>
-        <th>含义</th><th>旧值 → 新值</th><th>TX</th>
+        <th>${t("perm_th_time")}</th><th>${t("perm_th_contract")}</th><th>${t("perm_th_event")}</th>
+        <th>${t("perm_th_meaning")}</th><th>${t("perm_th_oldnew")}</th><th>${t("perm_th_tx")}</th>
       </tr></thead>
       <tbody>
       ${events.map(e => {
         const oldStr = _pickOld(e);
         const newStr = _pickNew(e);
         const assetSym = e.asset ? _assetSymbol.get(String(e.asset).toLowerCase()) : null;
+        const desc = isEn ? (e.description_en ?? e.description_zh ?? "") : (e.description_zh ?? "");
         return `
         <tr>
           <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
@@ -3200,7 +3259,7 @@ async function renderPermissions(box, pk) {
             ${assetSym ? `<div style="font-size:10px;color:#22d3ee">(on ${assetSym})</div>` : ""}
           </td>
           <td style="color:#fb923c">${e.event}</td>
-          <td>${e.description_zh || ""}</td>
+          <td>${desc}</td>
           <td class="mono" style="font-size:11px">
             ${oldStr ? `<span style="color:#64748b">${oldStr}</span> → ` : ""}
             <span style="color:#facc15">${newStr}</span>

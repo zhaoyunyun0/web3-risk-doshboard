@@ -15,7 +15,9 @@ from web3.types import LogReceipt
 
 from ..events import (
     AAVE_POOL_EVENTS_ABI,
+    EVENT_EN,
     EVENT_ZH,
+    PERMISSION_EVENT_EN,
     PERMISSION_EVENT_TOPIC0,
     PERMISSION_EVENT_ZH,
     POOL_ADDRESSES_PROVIDER_EVENTS_ABI,
@@ -26,12 +28,15 @@ from ..events import (
 from ..logger import log
 from ..rpc_pool import RpcPool
 from .permission_abis import (
+    ACL_MANAGER_EVENT_EN,
     ACL_MANAGER_EVENT_ZH,
     ACL_MANAGER_EVENTS_ABI,
     ACL_MANAGER_TOPIC0,
+    POOL_CONFIGURATOR_EVENT_EN,
     POOL_CONFIGURATOR_EVENT_ZH,
     POOL_CONFIGURATOR_EVENTS_ABI,
     POOL_CONFIGURATOR_TOPIC0,
+    POOL_PROXY_EVENT_EN,
     POOL_PROXY_EVENT_ZH,
     POOL_PROXY_EVENTS_ABI,
     POOL_PROXY_TOPIC0,
@@ -324,6 +329,7 @@ async def fetch_pool_activity(
             "tx_hash": txh,
             "event": name,
             "event_zh": EVENT_ZH.get(name, name),
+            "event_en": EVENT_EN.get(name, name),
             "user": user,
             "on_behalf_of": on_behalf_of,
             "amount_token": amt_token,
@@ -434,10 +440,10 @@ async def fetch_top_holders_by_netflow(
 # ---------- permission events ----------
 # 把每个合约的(地址, 角色名, ABI, 中文描述 map, topic0 map)打包到一张表里,
 # 统一驱动扫描逻辑。这样加合约只要往 _permission_targets 加一行。
-def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], dict, dict]]:
-    """返回 [(addr_checksum, role, abi, zh_map, topic0_map), ...]。
+def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], dict, dict, dict]]:
+    """返回 [(addr_checksum, role, abi, zh_map, en_map, topic0_map), ...]。
     地址为 None 的合约会被过滤掉(resolver 没拿到时降级)。"""
-    targets: list[tuple[str, str, list[dict], dict, dict]] = []
+    targets: list[tuple[str, str, list[dict], dict, dict, dict]] = []
 
     pap = deployment.get("pool_addresses_provider")
     if pap:
@@ -446,6 +452,7 @@ def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], di
             "PoolAddressesProvider",
             POOL_ADDRESSES_PROVIDER_EVENTS_ABI,
             PERMISSION_EVENT_ZH,
+            PERMISSION_EVENT_EN,
             PERMISSION_EVENT_TOPIC0,
         ))
 
@@ -456,6 +463,7 @@ def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], di
             "PoolConfigurator",
             POOL_CONFIGURATOR_EVENTS_ABI,
             POOL_CONFIGURATOR_EVENT_ZH,
+            POOL_CONFIGURATOR_EVENT_EN,
             POOL_CONFIGURATOR_TOPIC0,
         ))
 
@@ -466,6 +474,7 @@ def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], di
             "ACLManager",
             ACL_MANAGER_EVENTS_ABI,
             ACL_MANAGER_EVENT_ZH,
+            ACL_MANAGER_EVENT_EN,
             ACL_MANAGER_TOPIC0,
         ))
 
@@ -476,6 +485,7 @@ def _permission_targets(deployment: dict) -> list[tuple[str, str, list[dict], di
             "Pool",
             POOL_PROXY_EVENTS_ABI,
             POOL_PROXY_EVENT_ZH,
+            POOL_PROXY_EVENT_EN,
             POOL_PROXY_TOPIC0,
         ))
 
@@ -505,10 +515,12 @@ def _normalize_addr(val) -> str | None:
 
 def _build_event_record(
     *, log_entry: LogReceipt, role: str, name: str, args: dict,
-    zh_map: dict, ts: float, bn: int, txh: str,
+    zh_map: dict, en_map: dict, ts: float, bn: int, txh: str,
 ) -> dict:
     """把单条解码后事件转成前端 dict。按事件类型归一化
-    old/new/asset/extra。"""
+    old/new/asset/extra。返回 description_zh + description_en 双语描述,
+    old_display_zh/_en 和 new_display_zh/_en 双语 display(前端按 state.lang
+    选择)。"""
     contract = log_entry["address"]
     if isinstance(contract, (bytes, bytearray)):
         contract = "0x" + contract.hex()
@@ -629,6 +641,7 @@ def _build_event_record(
         "contract_role": role,
         "event": name,
         "description_zh": zh_map.get(name, name),
+        "description_en": en_map.get(name, name),
         "asset": asset,
         "old_value": old_val,
         "new_value": new_val,
@@ -636,19 +649,36 @@ def _build_event_record(
     if extra:
         out["extra"] = extra
 
-    # --- 人类可读 display 字段(前端优先用这个,fallback 到 fmtAddr) ---
-    old_display, new_display, extra_display = format_event_display(name, old_val, new_val, extra)
-    if old_display is not None:
-        out["old_display"] = old_display
-    if new_display is not None:
-        out["new_display"] = new_display
-    if extra_display:
-        out["extra_display"] = extra_display
+    # --- 人类可读 display 字段(前端按 state.lang 选 _zh 或 _en) ---
+    od_zh, nd_zh, extra_display_zh = format_event_display(name, old_val, new_val, extra, lang="zh")
+    od_en, nd_en, extra_display_en = format_event_display(name, old_val, new_val, extra, lang="en")
+    if od_zh is not None:
+        out["old_display_zh"] = od_zh
+    if od_en is not None:
+        out["old_display_en"] = od_en
+    if nd_zh is not None:
+        out["new_display_zh"] = nd_zh
+    if nd_en is not None:
+        out["new_display_en"] = nd_en
+    if extra_display_zh:
+        out["extra_display_zh"] = extra_display_zh
+    if extra_display_en:
+        out["extra_display_en"] = extra_display_en
 
-    # --- ACL: role bytes32 → 可读名 ---
+    # 向后兼容旧字段名(指向 zh 版);前端应优先用 _zh/_en
+    if od_zh is not None:
+        out["old_display"] = od_zh
+    if nd_zh is not None:
+        out["new_display"] = nd_zh
+    if extra_display_zh:
+        out["extra_display"] = extra_display_zh
+
+    # --- ACL: role bytes32 → 可读名(英文,无需翻) ---
     if role == "ACLManager" and extra and extra.get("role"):
         role_name = format_role_hash(extra.get("role"))
         if role_name:
+            out.setdefault("extra_display_zh", {})["role_name"] = role_name
+            out.setdefault("extra_display_en", {})["role_name"] = role_name
             out.setdefault("extra_display", {})["role_name"] = role_name
 
     return out
@@ -684,7 +714,7 @@ async def fetch_permission_events(
     # address: [addr1, addr2, ...]。
     addr_list = [t[0] for t in targets]
     all_topic0: list[str] = []
-    for _addr, _role, _abi, _zh, topic_map in targets:
+    for _addr, _role, _abi, _zh, _en, topic_map in targets:
         all_topic0.extend(topic_map.values())
     # 去重,避免同一 hash 出现多次(理论上每个事件签名 topic0 唯一,但保险)
     all_topic0 = list(dict.fromkeys(all_topic0))
@@ -698,10 +728,9 @@ async def fetch_permission_events(
     if not logs:
         return []
 
-    # 建立 地址 -> (role, abi, zh_map) 的查表,用于按 log.address 路由到
-    # 对应 ABI 解码。
-    addr_to_target: dict[str, tuple[str, list[dict], dict]] = {
-        t[0].lower(): (t[1], t[2], t[3]) for t in targets
+    # 建立 地址 -> (role, abi, zh_map, en_map) 的查表
+    addr_to_target: dict[str, tuple[str, list[dict], dict, dict]] = {
+        t[0].lower(): (t[1], t[2], t[3], t[4]) for t in targets
     }
 
     block_set = {int(l["blockNumber"]) for l in logs}
@@ -718,7 +747,7 @@ async def fetch_permission_events(
         if found is None:
             # 不该发生,保险跳过
             continue
-        role, abi, zh_map = found
+        role, abi, zh_map, en_map = found
 
         name, args = _decode_log_with_abi(abi, l)
         if name is None:
@@ -736,7 +765,7 @@ async def fetch_permission_events(
 
         rec = _build_event_record(
             log_entry=l, role=role, name=name, args=args,
-            zh_map=zh_map, ts=ts, bn=bn, txh=txh,
+            zh_map=zh_map, en_map=en_map, ts=ts, bn=bn, txh=txh,
         )
         out.append(rec)
 
