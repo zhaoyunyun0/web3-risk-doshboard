@@ -1,9 +1,12 @@
 # web3_risk_dashboard
 
 DeFi 借贷池安全预警系统 — 监控 Aave v3 / Compound / Morpho / Spark 等主流协议,
-通过 TVL、utilization、流动性、大户持仓等维度提前发现攻击或异常流出,并推送 Lark 告警。
+通过 TVL、utilization、流动性、大户持仓、链上权限变更等维度提前发现攻击或异常流出,
+并推送 Lark 告警。配套 Web Dashboard(深色主题,类 Grafana/Bloomberg 密度)。
 
-当前版本 **v0.1 demo**,覆盖 Ethereum + Aave v3。更多协议/链按 PRD 路线图逐步扩展。
+**当前版本**:v0.2 — 支持 **Ethereum + Avalanche C-Chain**(7 条链 RPC 预配),
+Dashboard 已具备首页总览 / 全局搜索(Cmd+K) / 告警聚合 / Mute 跨进程同步 /
+堆叠+对比趋势图切换 / 活动净流统计 等能力。更多协议/链按 PRD 路线图逐步扩展。
 
 完整需求:[docs/PRD.md](docs/PRD.md)
 RPC 基础设施详设:[docs/RPC_INFRASTRUCTURE.md](docs/RPC_INFRASTRUCTURE.md)
@@ -53,7 +56,9 @@ Web Dashboard:  web / web-stop
 
 ---
 
-## 特性(demo 已实现)
+## 特性
+
+### 🛡 采集 + 告警引擎
 
 - ✅ 多公共 RPC 节点池(每链 3-5 个),加权随机 + 健康分路由
 - ✅ 四层重试 + 独立熔断器(每 provider)
@@ -65,20 +70,46 @@ Web Dashboard:  web / web-stop
 - ✅ SQLite 持久化(snapshots + alerts,7 天保留,启动 bootstrap 回加载历史)
 - ✅ 兼容 MKR 这类 `bytes32 symbol` 老合约(string → bytes32 fallback)
 - ✅ 干净退出:signal handler + 所有 aiohttp session 显式关闭
-- ✅ **Web Dashboard**:FastAPI + 单页 SPA,6 个 tab(概览 / 趋势 / 活动 / 持仓 / 权限 / 告警)
-- ✅ **大额活动 on-demand 查询**:Supply / Withdraw / Borrow / Repay / LiquidationCall 事件实时拉取
-- ✅ **Top 20 近期净流入排名**:按 24h Supply-Withdraw 净流向聚合
+
+### 🔗 多链 + 权限监控
+
+- ✅ **多链就绪**:7 条链 RPC 与 Aave v3 地址已预配 — Ethereum / Arbitrum / Optimism / Base / BNB / Polygon / **Avalanche C-Chain**。`.env` 的 `ENABLED_CHAINS` 逗号分隔即可开启(目前默认 `ethereum,avaxc`)
 - ✅ **协议权限监控**:PoolAddressesProvider 的 9 个权限事件(PoolUpdated、ACLAdminUpdated 等)
 - ✅ **Track B 链上事件实时告警**:主循环每 tick `eth_getLogs` 权限 + 代理升级事件,新事件推 Lark L2 卡片(PRD FR-06)
-- ✅ **多链就绪**:Ethereum / Arbitrum / Optimism / Base / BNB / Polygon 的 RPC 与 Aave v3 地址均已预配,`.env` 的 `ENABLED_CHAINS` 逗号分隔即可开启
+- ✅ **权限页扩展扫描**:除 PAP 外,还扫 PoolConfigurator / ACLManager / Pool 代理(SupplyCap/BorrowCap/ReservePaused/RoleGranted/Upgraded 等)
+
+### 🌐 Web Dashboard
+
+- ✅ **FastAPI + 单页 SPA**,单文件 `src/web/static/index.html`,无构建步骤
+- ✅ **首页总览**(默认路由):KPI 卡 + 告警最多 top 10 + 利用率 TOP 8 + 流动性紧张 TOP 8 + 全局屏蔽表 + 最近告警,60s 自刷
+- ✅ **6 个详情 tab**(按频次排序):告警 / 概览 / 趋势 / 活动 / 持仓 / 权限
+- ✅ **侧栏告警徽章**:每个池子名旁实时显示 1h 激活告警数(已屏蔽的不计),45s 自刷
+- ✅ **Cmd/Ctrl+K 全局搜索**:模糊匹配 symbol / pool_key / 链 / 协议,键盘导航
+- ✅ **趋势图双模式**:对比(三条线独立 y 轴 auto-scale,稳定币池放大小幅波动)/ 堆叠(Borrow+Liquidity≈Supply 展示结构);新接入池子数据不足时横幅提示
+- ✅ **告警聚合去重**:同 (rule,level, 60s 窗) 合并为 `×N` 展开可见组内每条
+- ✅ **大额活动 on-demand 查询**:Supply / Withdraw / Borrow / Repay / LiquidationCall 事件实时拉取,顶部 4 张净流卡(流入/流出/清算/净差值)
+- ✅ **Top 20 近期净流入排名**:按 24h Supply-Withdraw 净流向聚合
+- ✅ **告警"已屏蔽"状态回显**:告警列表逐行显示"✅ 屏蔽中 · 剩余时间"标签 + 取消屏蔽按钮
+- ✅ **Design tokens 化**:全站颜色/间距/字号/阴影走 CSS 变量,易于维护
+- ✅ **状态栏分层 chip**:监控 / 告警(>100 红,>0 橙) / 快照 / 链 / WS 五个独立 chip
+- ✅ **Skeleton 骨架屏**:表格/图表/KPI 各自有 shimmer 占位
+- ✅ **侧栏折叠持久化**:localStorage,刷新保持
 - ✅ **WebSocket 实时推送**:Dashboard 状态栏与"最近告警"通过 `/api/ws/stream` 服务端 push 更新;WS 断开自动退回 5s/30s 轮询兜底
+- ✅ **禁用浏览器缓存**:`/` 响应 `Cache-Control: no-cache`,避免旧 JS 残留
+
+### 🔕 Mute(告警屏蔽)
+
+- ✅ **CLI + Web UI 双入口**:支持整池屏蔽或按 (pool, rule) 精确屏蔽,带过期时间
+- ✅ **跨进程自动同步**:监控进程每次 `find()` 检查 `mutes.yaml` mtime,Web UI 新加的屏蔽 ≤60 秒内监控进程生效(之前需重启才行,v0.2 修复)
+- ✅ **过期自动清理**:到期条目在运行时自动 prune
 
 ## 未做(v1 计划中)
 
 - 🟡 静态 aToken 余额排名(代码就绪,见下文 M4 段;配好 The Graph key 即开启)
+- 🟡 大额存/取款单笔告警(阈值已设计,实施中)
+- 🟡 中英双语界面(规划中)
 - ❌ 多协议(Compound / Morpho / Spark 骨架已预留)
 - ❌ DEX 流动性深度 + 脱锚检测
-- (Dashboard 实时推送已完成,见上)
 
 ---
 
@@ -89,25 +120,41 @@ web3_risk_dashboard/
 ├── README.md
 ├── requirements.txt
 ├── .env.example
+├── w3risk                 # CLI 入口(start/stop/up/down/mute/probe 等)
 ├── config/
-│   ├── rpc.yaml           # 每链的多个公共节点配置
+│   ├── rpc.yaml           # 每链的多个公共节点配置(7 条链)
 │   ├── protocols.yaml     # PoolAddressesProvider 地址 + 资产白名单
-│   └── rules.yaml         # 告警规则阈值
+│   └── rules.yaml         # 告警规则阈值 + 事件级别映射
 ├── docs/
 │   ├── PRD.md
-│   └── RPC_INFRASTRUCTURE.md
+│   ├── RPC_INFRASTRUCTURE.md
+│   └── WEB_API_CONTRACT.md
 ├── src/
-│   ├── abis.py            # 最小 ABI
-│   ├── config.py          # 配置加载
+│   ├── abis.py                  # 最小 ABI
+│   ├── config.py                # 配置加载
 │   ├── logger.py
-│   ├── circuit_breaker.py # 熔断器 + 健康分
-│   ├── rpc_pool.py        # 多节点路由 + 重试
-│   ├── aave_v3_collector.py
-│   ├── snapshot_store.py  # 滚动历史
-│   ├── rule_engine.py     # 规则评估
-│   ├── lark_notifier.py   # Lark Bot webhook
-│   └── main.py            # CLI 入口 + 主循环
-└── data/  logs/           # 运行时目录(git-ignored)
+│   ├── circuit_breaker.py       # 熔断器 + 健康分
+│   ├── rpc_pool.py              # 多节点路由 + 重试
+│   ├── aave_v3_collector.py     # Track A:pool 快照采集
+│   ├── event_tracker.py         # Track B:链上事件监听
+│   ├── events.py                # 事件 ABI + topic0 + 中文描述
+│   ├── snapshot_store.py        # 滚动历史
+│   ├── rule_engine.py           # 规则评估
+│   ├── mute_store.py            # 告警屏蔽(跨进程同步)
+│   ├── hidden_pools.py          # 池子软删除
+│   ├── lark_notifier.py         # Lark Bot webhook
+│   ├── sqlite_sink.py           # SQLite 持久化
+│   ├── holders_subgraph.py      # The Graph 持仓查询
+│   ├── main.py                  # CLI 入口 + 主循环
+│   └── web/
+│       ├── api.py               # FastAPI 路由
+│       ├── on_demand.py         # 活动/持仓/权限 的 eth_getLogs 查询
+│       ├── resolver.py          # Aave 部署地址懒解析(Pool/PoolConfigurator/ACLManager 等)
+│       ├── permission_abis.py   # PoolConfigurator/ACLManager/Pool 代理事件定义
+│       ├── cache.py             # 活动/持仓/权限响应缓存
+│       ├── ws_hub.py            # WebSocket 广播
+│       └── static/index.html    # 前端单文件 SPA(约 2000 行)
+└── data/  logs/                 # 运行时目录(git-ignored)
 ```
 
 ---
@@ -135,10 +182,11 @@ cp .env.example .env
 ```
 
 可选环境变量(见 `.env.example`):
-- `ENABLED_CHAINS` — 仅启用某些链,默认 `ethereum`
+- `ENABLED_CHAINS` — 仅启用某些链,默认 `ethereum,avaxc`(可选值:`ethereum`/`arbitrum`/`optimism`/`base`/`polygon`/`bnb`/`avaxc`)
 - `ALERT_MIN_LEVEL` — 最低推送级别:`info|warning|alert|critical`,默认 `warning`
 - `COLLECT_INTERVAL_SEC` — 采集间隔秒,默认 60
 - `LARK_PUSH_INFO=true` — 开启心跳推送(每 10 tick 一次)
+- `THE_GRAPH_AAVE_V3_URL_<CHAIN>` — The Graph subgraph URL,用于持仓静态排名(可选,见下文 M4 段)
 
 ### 3. 自检(不改动生产,先跑诊断)
 
@@ -179,6 +227,8 @@ python -m src.main run
 
 ## 告警规则(`config/rules.yaml`)
 
+### Track A:快照阈值规则(已实现)
+
 | 类型 | 示例规则 | 级别 |
 |---|---|---|
 | **tvl_drop** | 5 分钟内 TVL 跌 > 5% | warning |
@@ -190,6 +240,16 @@ python -m src.main run
 |  | 1 分钟借款增 > 10% | alert |
 | **liquidity_drain** | 5 分钟可用流动性跌 > 30% | alert |
 |  | 1 分钟可用流动性跌 > 20% | critical |
+
+### Track B:链上事件告警(已实现,见下文 Track B 段)
+
+### 计划中:大额单笔转账告警(v0.3)
+
+- `large_withdraw_1m` 单笔流出(Withdraw/Borrow) ≥ $1M → warning
+- `large_withdraw_5m` 单笔流出 ≥ $5M → alert
+- `large_withdraw_10m` 单笔流出 ≥ $10M → critical
+- avaxc 等小池(TVL < $100M)可叠加**占 TVL 百分比**阈值,防止固定金额对小池子不敏感
+- 流入(Supply/Repay)暂不计入告警,按需再加
 
 规则都可在 `rules.yaml` 里改阈值、加新规则。**同一 (pool, rule) 5 分钟内只推送一次**。
 
@@ -206,36 +266,61 @@ open http://localhost:8787
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│ 🛡 w3_risk_dashboard              状态栏               │
+│ 🛡 w3_risk_dashboard    🟢监控 🚨告警 💾快照 🔗链 ⚡WS │
 ├─────────────┬─────────────────────────────────────────┤
-│ ▾ Aave v3   │ Aave v3 · 以太坊 · USDC                  │
-│   ▾ 以太坊   │ ┌─[概览][趋势][活动][持仓][权限][告警]─┐ │
-│     • USDC ▰│ │                                     │ │
-│     • USDT  │ │  <当前 tab>                          │ │
-│     • WETH  │ │                                     │ │
-│     ...     │ └─────────────────────────────────────┘ │
+│ 🏠 总览 [N] │ Aave v3 · 以太坊 · USDC                  │
+│ [搜索Cmd+K] │ ┌─[告警][概览][趋势][活动][持仓][权限]─┐ │
+│ ▾ Aave v3   │ │                                     │ │
+│   ▾ avaxc   │ │  <当前 tab>                          │ │
+│     • USDt ●│ │                                     │ │
+│   ▾ 以太坊  │ │                                     │ │
+│     • USDC ●│ └─────────────────────────────────────┘ │
+│     ...     │                                         │
 ├─────────────┴─────────────────────────────────────────┤
-│ 📢 最近告警(全局,30s 自动刷新)                       │
+│ 📢 最近告警(全局,30s 自动刷新,同规则 60s 窗聚合 ×N)  │
 └───────────────────────────────────────────────────────┘
 ```
 
-6 个 tab 数据源:
+### 首页"总览"(默认路由)
+
+无 hash 时默认进入,包含:
+- **5 张 KPI 卡**:池子总数 / TVL / 加权利用率 / 激活告警数 / 屏蔽数
+- **告警最多的池子 Top 10**(最近 1h,排除屏蔽)
+- **利用率 TOP 8**(进度条可视化)
+- **流动性紧张 TOP 8**(available / supply 比例)
+- **全局激活屏蔽规则表**(所有 chain/protocol)
+- **近 10 条告警**
+- 60s 自刷
+
+### 6 个详情 tab(按使用频次排序)
 
 | Tab | 数据 | 来源 | 缓存 |
 |---|---|---|---|
-| **概览** | 当前存款 / 借款 / 利用率 / 流动性 / 价格 / 区块 | SQLite 最新快照 | 无 |
-| **趋势** | 24h / 6h / 1h / 7d 多线图 | SQLite history | 无 |
-| **大额活动** | Supply / Withdraw / Borrow / Repay / LiquidationCall 事件 | `eth_getLogs` on-demand | 30s |
-| **持仓** | 近 24h 净流入排名 Top 20(Supply - Withdraw) | `eth_getLogs` 聚合 | 5min |
-| **权限** | PoolAddressesProvider 的权限事件 | `eth_getLogs` | 60s |
-| **告警** | 该池子历史告警 | SQLite `alerts` 表 | 无 |
+| **告警** | 该池子历史告警 + 已屏蔽状态回显 | SQLite `alerts` 表 + `/api/mutes` | 无 |
+| **概览** | 当前存款 / 借款 / 利用率 / 流动性 / 价格 / 区块 + Mute 面板 + 软删除 | SQLite 最新快照 | 无 |
+| **趋势** | 24h / 6h / 1h / 7d 多线图,对比/堆叠双模式 | SQLite history | 无 |
+| **活动** | Supply / Withdraw / Borrow / Repay / LiquidationCall 事件 + 净流 4 卡 | `eth_getLogs` on-demand | 30s |
+| **持仓** | 近 24h 净流入排名 Top 20(Supply - Withdraw) | `eth_getLogs` 聚合 / The Graph | 5min |
+| **权限** | 协议级权限变更 · 24h/3d/7d 切换 · 带进度计时 | `eth_getLogs` | 60s |
 
 API 文档:`docs/WEB_API_CONTRACT.md`
 
-前端特性:
-- 深色主题,数据密度高(走 Grafana / Bloomberg 风格)
+### 快捷键
+
+| 快捷键 | 行为 |
+|---|---|
+| `Cmd+K` / `Ctrl+K` | 打开全局搜索(模糊匹配 symbol/链/协议) |
+| `↑` / `↓` / `Enter` / `Esc` | 搜索面板内导航 |
+
+### 前端特性
+
+- 深色主题 + design tokens(CSS 变量,易改色板)
+- 数据密度高(走 Grafana / Bloomberg 风格)
 - 地址/hash 自动缩写,hover 看完整,tx_hash 跳 Etherscan
 - URL hash 路由:`#/pool/ethereum:aave_v3:USDC/activity` 刷新不丢状态
+- 侧栏告警徽章 45s 自刷(已屏蔽的不计)
+- 侧栏树折叠状态持久化(localStorage)
+- Skeleton 骨架屏(表格/图表/KPI 各自的 shimmer)
 - Mock 模式:`?mock=1` 不启后端也能看全部 UI,方便前端二开
 
 ---
@@ -303,9 +388,11 @@ THE_GRAPH_AAVE_V3_URL_ETHEREUM=https://gateway.thegraph.com/api/<KEY>/subgraphs/
 ./w3risk unmute ethereum:aave_v3:WETH --rule utilization_99pct
 ```
 
-屏蔽规则存在 `data/mutes.yaml`,进程重启后自动加载;过期条目在运行时自动清理。
+屏蔽规则存在 `data/mutes.yaml`,**监控进程 + Web 进程跨进程自动同步**(文件 mtime 检测,变化即 reload,延迟 ≤60 秒)。过期条目在运行时自动清理。
 
 被屏蔽的告警**不入库也不推送**(只在日志里 `alert muted ...` 标记一行)。
+
+**在 Web UI 屏蔽**:概览 tab 的"告警屏蔽"面板,或告警 tab 每行的"🔕 屏蔽 7d"按钮 — 点击后即刻写 `mutes.yaml`,监控进程最多 60 秒内感知(下轮采集 tick)。
 
 ---
 
@@ -369,9 +456,10 @@ LOG_LEVEL=DEBUG python -m src.main run
 
 ## 下一步计划
 
-按 PRD M2-M6 推进:
-- M2: 多链扩展(Arb/Base/OP/BNB)
-- M3: Compound / Morpho / Spark
-- M4: Top 20 持仓监控
-- M5: DEX 流动性深度 + 脱锚检测
-- M6: Web Dashboard + 订阅系统
+按 PRD 推进:
+- **v0.3** 大额存/取款单笔告警:单笔 ≥ $1M warning / ≥ $5M alert / ≥ $10M critical,avaxc 可叠加"占池 TVL 百分比"维度(因池子较小,固定金额阈值偏保守)
+- **v0.3** 权限页"旧值→新值"人类可读化:Cap 数字千分位、Paused 的 boolean、role bytes32 解码
+- **v0.3** 中英双语界面 + 顶栏一键切换(localStorage 持久化)
+- **v0.4** 多协议:Compound / Morpho / Spark
+- **v0.5** DEX 流动性深度 + 脱锚检测
+- **v0.6** 订阅系统(WxBot/Slack/Webhook generic)
