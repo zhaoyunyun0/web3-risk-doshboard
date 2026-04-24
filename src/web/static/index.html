@@ -2178,24 +2178,34 @@ window.copyToClip = function(txt, btn) {
    ========================================================= */
 async function renderTrend(box, pk) {
   const hours = state.trendHours;
+  // 默认"对比模式":三条独立 y 轴自适应,放大小变化。稳定币池 Supply/Borrow
+  // 变化可能 <0.01%,堆叠模式会显示为直线;对比模式能把波动放大到可见
+  const mode = state.trendMode = state.trendMode || 'compare';
+
   box.innerHTML = `
-    <div class="toolbar">
+    <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:8px">
       <div class="range-switcher" id="trend-range">
         ${[1,6,24,168].map(h => {
           const lbl = h===168 ? "7d" : (h+"h");
           return `<button data-h="${h}" class="${h===hours?'active':''}">${lbl}</button>`;
         }).join("")}
       </div>
-      <span style="font-size:12px;color:#64748b">左轴: 美元金额（堆叠: Borrow + Liquidity ≈ Supply）· 右轴: 利用率 %</span>
+      <div class="range-switcher" id="trend-mode">
+        <button data-m="compare" class="${mode==='compare'?'active':''}" title="三条线各自 y 轴自适应,放大波动细节 — 稳定币池推荐">对比</button>
+        <button data-m="stacked" class="${mode==='stacked'?'active':''}" title="堆叠面积 Borrow + Liquidity ≈ Supply,展示池子结构">堆叠</button>
+      </div>
+      <span id="trend-meta" style="font-size:12px;color:#64748b;margin-left:auto"></span>
     </div>
+    <div id="trend-banner"></div>
     <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
   `;
   document.querySelectorAll("#trend-range button").forEach(b => {
-    b.onclick = () => {
-      state.trendHours = parseInt(b.dataset.h);
-      renderTrend(box, pk);
-    };
+    b.onclick = () => { state.trendHours = parseInt(b.dataset.h); renderTrend(box, pk); };
   });
+  document.querySelectorAll("#trend-mode button").forEach(b => {
+    b.onclick = () => { state.trendMode = b.dataset.m; renderTrend(box, pk); };
+  });
+
   const r = await api(`/api/pools/${encodeURIComponent(pk)}/history?hours=${hours}`);
   if (!r.ok) {
     box.querySelector(".chart-wrap").innerHTML = `<div class="error">数据加载失败: ${r.error}</div>`;
@@ -2206,29 +2216,105 @@ async function renderTrend(box, pk) {
     box.querySelector(".chart-wrap").innerHTML = `<div class="empty">暂无数据</div>`;
     return;
   }
+
+  // 数据元信息 + 不足/稳定提示
+  const spanMin = (s[s.length-1].ts - s[0].ts) / 60;
+  const spanTxt = spanMin >= 60 ? (spanMin/60).toFixed(1) + " 小时" : spanMin.toFixed(1) + " 分钟";
+  const metaEl = document.getElementById("trend-meta");
+  if (metaEl) {
+    metaEl.textContent = `${s.length} 条快照 · 跨度 ${spanTxt}`;
+  }
+  const banner = document.getElementById("trend-banner");
+  const supplies = s.map(x => x.supply_usd).filter(v => v != null);
+  const supMin = supplies.length ? Math.min(...supplies) : 0;
+  const supMax = supplies.length ? Math.max(...supplies) : 0;
+  const variance = supMin > 0 ? (supMax - supMin) / supMin * 100 : 0;
+  const tips = [];
+  if (s.length < 5 || spanMin < 15) {
+    tips.push(`⚠️ 新接入池子,历史仅 ${s.length} 条快照 / ${spanTxt};至少等 1 小时再看完整趋势`);
+  }
+  if (variance < 0.05 && s.length >= 5 && mode === 'stacked') {
+    tips.push(`💡 此时段 Supply 变化仅 ${variance.toFixed(4)}% — 堆叠图呈平直是数据稳定所致;切"对比"模式可放大细节波动`);
+  }
+  if (banner) {
+    banner.innerHTML = tips.length === 0 ? "" : tips.map(t =>
+      `<div style="padding:8px 12px;margin:8px 0;background:var(--bg-2,#1e293b);border-left:3px solid var(--warn,#facc15);border-radius:4px;color:var(--text-0,#e2e8f0);font-size:12px">${t}</div>`
+    ).join("");
+  }
+
   const labels = s.map(x => new Date(x.ts * 1000));
   const supply = s.map(x => x.supply_usd);
   const borrow = s.map(x => x.borrow_usd);
   const avail  = s.map(x => x.available_liquidity_usd);
   const util   = s.map(x => x.utilization_pct);
 
+  // 计算放大轴范围:对比模式下每条线 y 轴填充率扩 2% padding
+  const padRange = (vals, padPct=2) => {
+    const vs = vals.filter(v => v != null && !isNaN(v));
+    if (vs.length === 0) return { min: 0, max: 1 };
+    const mn = Math.min(...vs), mx = Math.max(...vs);
+    if (mn === mx) {
+      const pad = Math.max(Math.abs(mn) * 0.005, 1);  // Supply 恒定时给 ±0.5% 轴
+      return { min: mn - pad, max: mx + pad };
+    }
+    const range = mx - mn;
+    return { min: mn - range * padPct / 100, max: mx + range * padPct / 100 };
+  };
+
+  let datasets, scales;
+  if (mode === 'stacked') {
+    datasets = [
+      { label: "Borrow USD", data: borrow, yAxisID: "y", stack: "assets", fill: "origin",
+        borderColor: "#fb923c", backgroundColor: "rgba(251,146,60,0.35)", borderWidth: 1.2, tension: 0.2, pointRadius: 0 },
+      { label: "Liquidity USD", data: avail, yAxisID: "y", stack: "assets", fill: "-1",
+        borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,0.45)", borderWidth: 1.2, tension: 0.2, pointRadius: 0 },
+      { label: "Supply USD (参考)", data: supply, yAxisID: "y", stack: "supply-ref", fill: false,
+        borderColor: "#22d3ee", borderWidth: 1, borderDash: [2,3], tension: 0.2, pointRadius: 0 },
+      { label: "利用率 %", data: util, yAxisID: "y1", fill: false,
+        borderColor: "#facc15", borderWidth: 1.5, borderDash: [4,4], tension: 0.2, pointRadius: 0 }
+    ];
+    scales = {
+      x: {
+        type: "time", time: { unit: hours <= 6 ? "minute" : (hours <= 24 ? "hour" : "day") },
+        ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "#1e293b" }
+      },
+      y: { position: "left", stacked: true, beginAtZero: true,
+        ticks: { color: "#64748b", callback: (v) => fmtUSD(v) }, grid: { color: "#1e293b" } },
+      y1: { position: "right", min: 0, max: 100,
+        ticks: { color: "#facc15", callback: (v) => v + "%" }, grid: { drawOnChartArea: false } }
+    };
+  } else {
+    // 对比模式:三条独立 y 轴(隐藏刻度),各自 auto-scale,细节可见
+    const sR = padRange(supply), bR = padRange(borrow), lR = padRange(avail);
+    datasets = [
+      { label: "Supply USD", data: supply, yAxisID: "ySup", fill: false,
+        borderColor: "#22d3ee", backgroundColor: "rgba(34,211,238,0.1)", borderWidth: 1.8, tension: 0.2, pointRadius: 0 },
+      { label: "Borrow USD", data: borrow, yAxisID: "yBor", fill: false,
+        borderColor: "#fb923c", backgroundColor: "rgba(251,146,60,0.1)", borderWidth: 1.8, tension: 0.2, pointRadius: 0 },
+      { label: "Liquidity USD", data: avail, yAxisID: "yLiq", fill: false,
+        borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,0.1)", borderWidth: 1.8, tension: 0.2, pointRadius: 0 },
+      { label: "利用率 %", data: util, yAxisID: "y1", fill: false,
+        borderColor: "#facc15", borderWidth: 1.5, borderDash: [4,4], tension: 0.2, pointRadius: 0 }
+    ];
+    scales = {
+      x: {
+        type: "time", time: { unit: hours <= 6 ? "minute" : (hours <= 24 ? "hour" : "day") },
+        ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "#1e293b" }
+      },
+      // 3 条独立轴,仅用于 auto-scale,不显示刻度(避免挤占空间)
+      ySup: { position: "left", display: false, min: sR.min, max: sR.max },
+      yBor: { position: "left", display: false, min: bR.min, max: bR.max },
+      yLiq: { position: "left", display: false, min: lR.min, max: lR.max },
+      y1:   { position: "right", min: 0, max: 100,
+        ticks: { color: "#facc15", callback: (v) => v + "%" }, grid: { drawOnChartArea: false } }
+    };
+  }
+
   const ctx = document.getElementById("trend-chart").getContext("2d");
   destroyChart();
   state.chartInstance = new Chart(ctx, {
     type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Borrow USD", data: borrow, yAxisID: "y", stack: "assets", fill: "origin",
-          borderColor: "#fb923c", backgroundColor: "rgba(251,146,60,0.35)", borderWidth: 1.2, tension: 0.2, pointRadius: 0 },
-        { label: "Liquidity USD", data: avail, yAxisID: "y", stack: "assets", fill: "-1",
-          borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,0.45)", borderWidth: 1.2, tension: 0.2, pointRadius: 0 },
-        { label: "Supply USD (参考)", data: supply, yAxisID: "y", stack: "supply-ref", fill: false,
-          borderColor: "#22d3ee", borderWidth: 1, borderDash: [2,3], tension: 0.2, pointRadius: 0 },
-        { label: "利用率 %", data: util, yAxisID: "y1", fill: false,
-          borderColor: "#facc15", borderWidth: 1.5, borderDash: [4,4], tension: 0.2, pointRadius: 0 }
-      ]
-    },
+    data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
@@ -2246,20 +2332,7 @@ async function renderTrend(box, pk) {
           }
         }
       },
-      scales: {
-        x: {
-          type: "time", time: { unit: hours <= 6 ? "minute" : (hours <= 24 ? "hour" : "day") },
-          ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "#1e293b" }
-        },
-        y: {
-          position: "left", stacked: true, beginAtZero: true,
-          ticks: { color: "#64748b", callback: (v) => fmtUSD(v) }, grid: { color: "#1e293b" }
-        },
-        y1: {
-          position: "right", min: 0, max: 100,
-          ticks: { color: "#facc15", callback: (v) => v + "%" }, grid: { drawOnChartArea: false }
-        }
-      }
+      scales
     }
   });
 }
@@ -2494,19 +2567,53 @@ async function renderPermissions(box, pk) {
     box.innerHTML = `<div class="error">未找到池子信息</div>`;
     return;
   }
+  // 默认查时间窗可切换 — 7d 需扫 RPC 日志 ~40k block,耗时 15-40s(首次),
+  // 之后吃 permissions_cache。24h 是 24h 需 3k block,约 10-15s
+  const hours = state.permHours || 168;
   box.innerHTML = `
-    <div class="tab-description">协议级别权限事件（针对 ${_protocolZh(pool.protocol)} / ${_chainZh(pool.chain)}，而非单个池子），近 7 天</div>
-    <div id="perm-body"><div class="loading">加载中…</div></div>
+    <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="font-size:12px;color:var(--text-2,#94a3b8)">协议级别权限事件 · ${_protocolZh(pool.protocol)} / ${_chainZh(pool.chain)}</div>
+      <div class="range-switcher" id="perm-range" style="margin-left:auto">
+        ${[24,72,168].map(h => {
+          const lbl = h===168 ? "7d" : h===72 ? "3d" : "24h";
+          return `<button data-h="${h}" class="${h===hours?'active':''}">${lbl}</button>`;
+        }).join("")}
+      </div>
+    </div>
+    <div id="perm-body"></div>
   `;
-  const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=168`);
+  document.querySelectorAll("#perm-range button").forEach(b => {
+    b.onclick = () => { state.permHours = parseInt(b.dataset.h); renderPermissions(box, pk); };
+  });
+  // 进度感强的加载态:skeleton + 计时器 + 提示文案
+  const body = document.getElementById("perm-body");
+  const startTs = Date.now();
+  const expectSec = hours >= 168 ? "15–40 秒" : hours >= 72 ? "10–25 秒" : "5–15 秒";
+  body.innerHTML = `
+    <div style="padding:16px;background:var(--bg-1,#0f172a);border:1px solid var(--bg-2,#1e293b);border-radius:6px;margin-bottom:12px">
+      <div style="color:var(--text-0,#e2e8f0);font-size:13px;margin-bottom:4px">🔄 正在扫 RPC 日志获取权限事件…</div>
+      <div style="color:var(--text-2,#94a3b8);font-size:12px">预期耗时 ${expectSec}(首次) · 已用 <span id="perm-elapsed">0</span> 秒 · 之后会缓存</div>
+    </div>
+    <div class="skeleton" style="height:36px;margin-bottom:6px"></div>
+    <div class="skeleton" style="height:36px;margin-bottom:6px"></div>
+    <div class="skeleton" style="height:36px;margin-bottom:6px"></div>
+  `;
+  const elapsedTimer = setInterval(() => {
+    const el = document.getElementById("perm-elapsed");
+    if (!el) { clearInterval(elapsedTimer); return; }
+    el.textContent = Math.round((Date.now() - startTs) / 1000);
+  }, 500);
+  const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=${hours}`);
+  clearInterval(elapsedTimer);
   const body = document.getElementById("perm-body");
   if (!r.ok) {
     body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
     return;
   }
   const events = r.events || [];
+  const hoursLbl = hours >= 168 ? "7 天" : hours >= 72 ? "3 天" : "24 小时";
   if (events.length === 0) {
-    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 7 天无权限变更（正常）</div>`;
+    body.innerHTML = `<div class="empty" style="color:#4ade80;font-size:14px">✅ 近 ${hoursLbl}无权限变更（正常）</div>`;
     return;
   }
   body.innerHTML = `
