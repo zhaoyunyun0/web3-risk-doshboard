@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..address_watchlist import WATCH_MODES, AddressWatchlist
 from ..config import AppConfig, load_config
 from ..hidden_pools import HiddenPoolStore
 from ..lark_notifier import CHAIN_ZH, LEVEL_ZH, PROTOCOL_ZH
@@ -49,6 +50,7 @@ class AppState:
         self.sink = SqliteSink(db_path=str(DB_PATH), retention_days=7)
         self.mute_store = MuteStore()
         self.hidden_pools = HiddenPoolStore()
+        self.watchlist = AddressWatchlist()
         self.rpc_pools: dict[str, RpcPool] = {}
         for chain in self.cfg.enabled_chains:
             if chain not in self.cfg.chains:
@@ -727,6 +729,72 @@ async def api_mutes_remove(
 ) -> dict:
     st = _require_state()
     n = st.mute_store.remove(pool_key, rule)
+    return {"ok": True, "removed": int(n)}
+
+
+# ---------- /api/watchlist (关注地址) ----------
+@app.get("/api/watchlist")
+async def api_watchlist_list() -> dict:
+    st = _require_state()
+    return {
+        "ok": True,
+        "addresses": [e.to_dict() for e in st.watchlist.list_all()],
+    }
+
+
+class WatchlistEntryBody(BaseModel):
+    address: str
+    label: str
+    tags: list[str] | None = None
+    note: str | None = ""
+    watch_mode: str | None = "tag_only"
+    threshold_usd: float | None = 0.0
+
+
+@app.post("/api/watchlist")
+async def api_watchlist_add(body: WatchlistEntryBody) -> dict:
+    st = _require_state()
+    entry = st.watchlist.add(
+        address=body.address,
+        label=body.label,
+        tags=body.tags or [],
+        note=body.note or "",
+        watch_mode=(body.watch_mode or "tag_only"),
+        threshold_usd=float(body.threshold_usd or 0),
+    )
+    if entry is None:
+        return {"ok": False, "error": "invalid address (需 0x + 40 hex)"}
+    return {"ok": True, "entry": entry.to_dict()}
+
+
+class WatchlistUpdateBody(BaseModel):
+    label: str | None = None
+    tags: list[str] | None = None
+    note: str | None = None
+    watch_mode: str | None = None
+    threshold_usd: float | None = None
+
+
+@app.patch("/api/watchlist/{address}")
+async def api_watchlist_update(address: str, body: WatchlistUpdateBody) -> dict:
+    st = _require_state()
+    entry = st.watchlist.update(
+        address=address,
+        label=body.label,
+        tags=body.tags,
+        note=body.note,
+        watch_mode=body.watch_mode,
+        threshold_usd=body.threshold_usd,
+    )
+    if entry is None:
+        return {"ok": False, "error": "address not found or invalid"}
+    return {"ok": True, "entry": entry.to_dict()}
+
+
+@app.delete("/api/watchlist/{address}")
+async def api_watchlist_remove(address: str) -> dict:
+    st = _require_state()
+    n = st.watchlist.remove(address)
     return {"ok": True, "removed": int(n)}
 
 
