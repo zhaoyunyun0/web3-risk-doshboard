@@ -47,8 +47,34 @@ liquidity_drain:
     time_window_sec: 60
     threshold_pct: 20.0
 
+# ---------- Track C:大额单笔转账告警 ----------
+# 每 tick 扫 Pool 合约的 Supply/Withdraw/Borrow/Repay 事件,过滤大额触发告警。
+# 默认只对"流出"(Withdraw/Borrow)告警 — 资金流出池子才是风险;流入(Supply/
+# Repay)偏正向,按需在 event_types 里加。
+#
+# 两套阈值并行:
+# 1) usd_thresholds:固定美元金额,适合大池子(ETH 上 TVL>1B 的主流稳定币)
+# 2) pct_thresholds:按占池 supply 百分比,对小池子(如 avaxc 的 USDt $32M)
+#    更敏感 — 固定 $1M 在大池里微不足道,但对小池是 3% 深度冲击
+#
+# 同一笔 tx 只告警一次(按 tx_hash+log_index 去重),内存滚动 24h。
+large_transfer:
+  event_types: ["Withdraw", "Borrow"]
+  usd_thresholds:
+    - {name: "large_withdraw_1m",  level: "warning",  usd: 1000000}
+    - {name: "large_withdraw_5m",  level: "alert",    usd: 5000000}
+    - {name: "large_withdraw_10m", level: "critical", usd: 10000000}
+  pct_thresholds:
+    # 仅在池子 supply_usd 低于此值时启用百分比规则(大池子已有固定金额覆盖)
+    enable_if_supply_below_usd: 100000000
+    rules:
+      - {name: "large_withdraw_1pct", level: "warning",  pct: 1.0}
+      - {name: "large_withdraw_3pct", level: "alert",    pct: 3.0}
+      - {name: "large_withdraw_5pct", level: "critical", pct: 5.0}
+
 # 可以通过 env ALERT_MIN_LEVEL 全局过滤
 # 默认去重:同一 (pool, rule) 对 5 分钟内不重复告警
+# 大额转账另按 (tx_hash, log_index) 去重,同笔只告警一次
 dedup:
   window_sec: 300
 

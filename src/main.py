@@ -9,6 +9,7 @@ from .aave_v3_collector import AaveV3Collector
 from .config import AppConfig, level_ge, load_config
 from .event_tracker import EventTracker
 from .hidden_pools import HiddenPoolStore
+from .large_transfer_scanner import LargeTransferScanner
 from .lark_notifier import LarkNotifier
 from .logger import log
 from .mute_store import MuteStore, parse_duration
@@ -39,6 +40,7 @@ class ChainWorker:
         self.rule_engine = RuleEngine(cfg.rules)
         self.collectors: list = []
         self.event_tracker: EventTracker | None = None
+        self.large_tx_scanner: LargeTransferScanner | None = None
 
     async def init(self) -> None:
         pap: str | None = None
@@ -70,6 +72,17 @@ class ChainWorker:
                 pap_addr=pap,
                 pool_addr=pool_addr,
                 event_rules=(self.cfg.rules or {}).get("events") or {},
+            )
+
+        # Track C: 大额单笔转账扫描器(只在有 pool_addr 且规则配置时启用)
+        large_tx_rules = (self.cfg.rules or {}).get("large_transfer") or {}
+        if self.sink is not None and pool_addr and large_tx_rules:
+            self.large_tx_scanner = LargeTransferScanner(
+                chain=self.chain,
+                rpc_pool=self.rpc_pool,
+                sink=self.sink,
+                pool_addr=pool_addr,
+                rules=large_tx_rules,
             )
 
     async def tick(self) -> None:
@@ -118,6 +131,15 @@ class ChainWorker:
         )
 
         alerts: list[Alert] = self.rule_engine.evaluate(all_snaps, self.store)
+
+        # Track C: 大额单笔转账扫描 — 复用同样的 alert 发送路径(mute/sink/notifier)
+        if self.large_tx_scanner is not None:
+            try:
+                lt_alerts = await self.large_tx_scanner.tick(all_snaps)
+                alerts.extend(lt_alerts)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("large_transfer scanner failed chain=%s: %s", self.chain, exc)
+
         for a in alerts:
             # 屏蔽检查:命中的告警直接丢弃(不推送、不入库)
             if self.mute_store is not None:
