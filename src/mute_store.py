@@ -82,14 +82,20 @@ class MuteStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.mutes: list[Mute] = []
+        # 记录加载时的文件 mtime,用于跨进程同步:监控进程和 Web 进程是两个独立进程,
+        # Web 写入后监控进程要感知才不会继续推送已屏蔽告警。reload_if_changed() 在
+        # 每次 find/list_active 调用前检查 mtime,变化则重新加载。
+        self._last_mtime: float = 0.0
         self.load()
 
     # --------- persistence ---------
     def load(self) -> None:
         if not self.path.exists():
             self.mutes = []
+            self._last_mtime = 0.0
             return
         try:
+            self._last_mtime = self.path.stat().st_mtime
             with open(self.path) as f:
                 data = yaml.safe_load(f) or {}
         except Exception as exc:  # noqa: BLE001
@@ -111,6 +117,28 @@ class MuteStore:
                 )
             )
 
+    def reload_if_changed(self) -> bool:
+        """若 mutes.yaml 文件 mtime 有变化,重新 load。返回是否 reload。"""
+        if not self.path.exists():
+            if self._last_mtime != 0.0:
+                self.mutes = []
+                self._last_mtime = 0.0
+                return True
+            return False
+        try:
+            mtime = self.path.stat().st_mtime
+        except OSError:
+            return False
+        if mtime == self._last_mtime:
+            return False
+        old_count = len(self.mutes)
+        self.load()
+        log.info(
+            "mutes.yaml 检测到外部改动,已重新加载 (%d → %d 条)",
+            old_count, len(self.mutes),
+        )
+        return True
+
     def save(self) -> None:
         data = {"muted": []}
         for m in self.mutes:
@@ -125,6 +153,11 @@ class MuteStore:
             data["muted"].append(entry)
         with open(self.path, "w") as f:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+        # 同步更新 mtime,避免自己 save 后又误判为"外部修改"触发多余 reload
+        try:
+            self._last_mtime = self.path.stat().st_mtime
+        except OSError:
+            pass
 
     # --------- mutation ---------
     def prune_expired(self) -> int:
@@ -175,6 +208,7 @@ class MuteStore:
 
     # --------- query ---------
     def find(self, pool_key: str, rule: str) -> Mute | None:
+        self.reload_if_changed()
         self.prune_expired()
         for m in self.mutes:
             if m.matches(pool_key, rule):
@@ -182,5 +216,6 @@ class MuteStore:
         return None
 
     def list_active(self) -> list[Mute]:
+        self.reload_if_changed()
         self.prune_expired()
         return list(self.mutes)
