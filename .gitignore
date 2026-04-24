@@ -10,6 +10,7 @@ data/*.db-wal
 data/*.sqlite
 data/mutes.yaml
 data/hidden_pools.yaml
+data/address_watchlist.yaml
 data/w3risk.pid
 data/w3risk-web.pid
 logs/*.log
