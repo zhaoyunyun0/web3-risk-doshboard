@@ -2605,7 +2605,6 @@ async function renderPermissions(box, pk) {
   }, 500);
   const r = await api(`/api/permissions?protocol=${encodeURIComponent(pool.protocol)}&chain=${encodeURIComponent(pool.chain)}&hours=${hours}`);
   clearInterval(elapsedTimer);
-  const body = document.getElementById("perm-body");
   if (!r.ok) {
     body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
     return;
