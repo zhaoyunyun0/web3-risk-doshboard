@@ -21,6 +21,7 @@ from web3 import AsyncWeb3
 from web3.types import LogReceipt
 
 from .aave_v3_collector import ReserveSnapshot
+from .address_watchlist import AddressWatchlist
 from .events import AAVE_POOL_EVENTS_ABI, POOL_EVENT_TOPIC0
 from .logger import log
 from .rpc_pool import RpcPool
@@ -47,6 +48,7 @@ class LargeTransferScanner:
         rules: dict | None,
         protocol: str = "aave_v3",
         lookback_blocks: int = 300,
+        watchlist: AddressWatchlist | None = None,
     ) -> None:
         self.chain = chain
         self.protocol = protocol
@@ -55,6 +57,8 @@ class LargeTransferScanner:
         self.pool_addr = AsyncWeb3.to_checksum_address(pool_addr) if pool_addr else None
         self.rules = rules or {}
         self.lookback_blocks = lookback_blocks
+        # 关注地址清单(可选):匹配到地址按 watch_mode 产出额外告警
+        self.watchlist = watchlist
         # dedup 记录:(tx_hash, log_index, rule_name) → 首次告警 ts
         self._fired: dict[tuple[str, int, str], float] = {}
         # 24h 滚动窗口清理(避免内存泄漏)
@@ -186,6 +190,63 @@ class LargeTransferScanner:
             block_number = int(l.get("blockNumber") or 0)
             user_addr = args.get("user") or args.get("onBehalfOf") or args.get("to") or ""
 
+            # --- 关注地址匹配(可选,先于阈值规则) ---
+            watch_entry = None
+            if self.watchlist is not None and user_addr:
+                watch_entry = self.watchlist.find(str(user_addr))
+
+            # 按 watch_mode 决定是否产出 watched_address 专属告警
+            # (独立于阈值规则,即使大额规则没命中,也会因为匹配关注地址而告警)
+            if watch_entry is not None and watch_entry.watch_mode != "tag_only":
+                should_alert_watched = False
+                watched_level = "warning"
+                if watch_entry.watch_mode == "alert_any":
+                    should_alert_watched = True
+                    watched_level = "warning"
+                elif watch_entry.watch_mode == "alert_threshold":
+                    if amount_usd >= max(1.0, float(watch_entry.threshold_usd)):
+                        should_alert_watched = True
+                        watched_level = "alert"
+
+                if should_alert_watched:
+                    watched_rule_name = f"watched_address:{watch_entry.label}"
+                    watched_key = (tx_hash, log_index, watched_rule_name)
+                    if watched_key not in self._fired:
+                        self._fired[watched_key] = now
+                        w_pool_key = f"{self.chain}:{self.protocol}:{meta['symbol']}"
+                        w_msg = (
+                            f"关注地址 **{watch_entry.label}** 在 "
+                            f"{self.chain}/{self.protocol} **{meta['symbol']}** "
+                            f"发生 **{name}** ${amount_usd:,.0f}"
+                        )
+                        w_metrics = {
+                            "event": name,
+                            "amount_usd": amount_usd,
+                            "amount_token": amount_token,
+                            "pct_of_pool_supply": pct_of_pool,
+                            "pool_supply_usd": pool_supply_usd,
+                            "user": user_addr,
+                            "user_label": watch_entry.label,
+                            "user_tags": list(watch_entry.tags),
+                            "watch_mode": watch_entry.watch_mode,
+                            "tx_hash": tx_hash,
+                            "block": block_number,
+                            "log_index": log_index,
+                        }
+                        alerts.append(
+                            Alert(
+                                level=watched_level,
+                                rule=watched_rule_name,
+                                pool_key=w_pool_key,
+                                chain=self.chain,
+                                protocol=self.protocol,
+                                symbol=meta["symbol"],
+                                message=w_msg,
+                                metrics=w_metrics,
+                                timestamp=now,
+                            )
+                        )
+
             # 收集命中的规则 — 按 USD 和 pct 两维分别跑
             hits: list[tuple[str, str]] = []  # (rule_name, level)
             for r in usd_thresholds:
@@ -210,14 +271,16 @@ class LargeTransferScanner:
                 continue
             self._fired[dedup_key] = now
 
+            # 大额告警 message 里如果命中关注地址,标上 label 方便 Lark 一眼看清身份
+            user_display = (
+                f"`{watch_entry.label}`" if watch_entry is not None
+                else (f"`{user_addr[:10]}...{user_addr[-6:]}`" if len(str(user_addr)) >= 16 else "")
+            )
             pool_key = f"{self.chain}:{self.protocol}:{meta['symbol']}"
             msg = (
                 f"{self.chain}/{self.protocol} **{meta['symbol']}** 单笔 "
-                f"**{name}** ${amount_usd:,.0f} (占池 {pct_of_pool:.2f}%) "
-                f"from `{user_addr[:10]}...{user_addr[-6:]}` tx {tx_hash[:10]}...{tx_hash[-6:]}"
-                if len(str(user_addr)) >= 16 else
-                f"{self.chain}/{self.protocol} **{meta['symbol']}** 单笔 "
                 f"**{name}** ${amount_usd:,.0f} (占池 {pct_of_pool:.2f}%)"
+                + (f" from {user_display}" if user_display else "")
             )
             metrics = {
                 "event": name,
@@ -230,6 +293,10 @@ class LargeTransferScanner:
                 "block": block_number,
                 "log_index": log_index,
             }
+            if watch_entry is not None:
+                metrics["user_label"] = watch_entry.label
+                if watch_entry.tags:
+                    metrics["user_tags"] = list(watch_entry.tags)
             alerts.append(
                 Alert(
                     level=rule_level,

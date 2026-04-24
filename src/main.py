@@ -6,6 +6,7 @@ import signal
 import time
 
 from .aave_v3_collector import AaveV3Collector
+from .address_watchlist import AddressWatchlist
 from .config import AppConfig, level_ge, load_config
 from .event_tracker import EventTracker
 from .hidden_pools import HiddenPoolStore
@@ -28,6 +29,7 @@ class ChainWorker:
         sink: SqliteSink | None,
         mute_store: MuteStore | None = None,
         hidden_pools: HiddenPoolStore | None = None,
+        watchlist: AddressWatchlist | None = None,
     ):
         self.chain = chain
         self.cfg = cfg
@@ -35,6 +37,7 @@ class ChainWorker:
         self.sink = sink
         self.mute_store = mute_store
         self.hidden_pools = hidden_pools
+        self.watchlist = watchlist
         self.rpc_pool = RpcPool(chain, cfg.chains[chain], cfg.defaults)
         self.store = SnapshotStore(retention_sec=3600, sink=sink)
         self.rule_engine = RuleEngine(cfg.rules)
@@ -83,6 +86,7 @@ class ChainWorker:
                 sink=self.sink,
                 pool_addr=pool_addr,
                 rules=large_tx_rules,
+                watchlist=self.watchlist,
             )
 
     async def tick(self) -> None:
@@ -203,12 +207,16 @@ async def run_loop(cfg: AppConfig) -> None:
     if hidden_pools.list_all():
         log.info("已加载 %d 个已删除池子(不采集不告警)", len(hidden_pools.list_all()))
 
+    watchlist = AddressWatchlist()
+    if watchlist.list_all():
+        log.info("已加载 %d 个关注地址", len(watchlist.list_all()))
+
     workers: list[ChainWorker] = []
     for chain in cfg.enabled_chains:
         if chain not in cfg.chains:
             log.warning("chain=%s not in rpc config, skip", chain)
             continue
-        w = ChainWorker(chain, cfg, notifier, sink, mute_store=mute_store, hidden_pools=hidden_pools)
+        w = ChainWorker(chain, cfg, notifier, sink, mute_store=mute_store, hidden_pools=hidden_pools, watchlist=watchlist)
         try:
             await w.init()
         except Exception as exc:  # noqa: BLE001
