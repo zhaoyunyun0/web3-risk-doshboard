@@ -749,52 +749,53 @@
 <header>
   <div class="brand"><span class="logo">🛡</span> w3_risk_dashboard</div>
   <div class="status-bar" id="status-bar">
-    <span class="status-chip" id="st-monitor"><span class="icon">⏳</span><span class="lbl">监控</span><span class="val">加载中…</span></span>
-    <span class="status-chip" id="st-alerts"><span class="icon">🚨</span><span class="lbl">告警</span><span class="val">-</span></span>
-    <span class="status-chip" id="st-snaps"><span class="icon">💾</span><span class="lbl">快照</span><span class="val">-</span></span>
-    <span class="status-chip" id="st-rpc"><span class="icon">📡</span><span class="lbl">链</span><span class="val">-</span></span>
-    <span class="status-chip" id="st-ws"><span class="icon">⚡</span><span class="lbl">WS</span><span class="val">-</span></span>
-    <button id="cmdk-btn" title="全局搜索 (Cmd/Ctrl+K)" style="margin-left:4px;background:var(--bg-2);border:1px solid var(--bg-3);color:var(--text-2);padding:3px 8px;border-radius:var(--radius-2);cursor:pointer;font-size:var(--fs-sm)">
+    <span class="status-chip" id="st-monitor"><span class="icon">⏳</span><span class="lbl"></span><span class="val"></span></span>
+    <span class="status-chip" id="st-alerts"><span class="icon">🚨</span><span class="lbl"></span><span class="val">-</span></span>
+    <span class="status-chip" id="st-snaps"><span class="icon">💾</span><span class="lbl"></span><span class="val">-</span></span>
+    <span class="status-chip" id="st-rpc"><span class="icon">📡</span><span class="lbl"></span><span class="val">-</span></span>
+    <span class="status-chip" id="st-ws"><span class="icon">⚡</span><span class="lbl"></span><span class="val">-</span></span>
+    <button id="cmdk-btn" style="margin-left:4px;background:var(--bg-2);border:1px solid var(--bg-3);color:var(--text-2);padding:3px 8px;border-radius:var(--radius-2);cursor:pointer;font-size:var(--fs-sm)">
       🔍 <span style="color:var(--text-3);font-family:var(--font-mono);font-size:10px">⌘K</span>
     </button>
+    <button id="lang-switch" style="margin-left:4px;background:var(--bg-2);border:1px solid var(--bg-3);color:var(--text-0);padding:3px 10px;border-radius:var(--radius-2);cursor:pointer;font-size:var(--fs-sm);font-weight:600"></button>
   </div>
 </header>
 
 <main>
   <aside class="tree-panel">
-    <div class="tree-overview-entry" id="tree-overview-entry" title="全局总览 (默认首页)">
+    <div class="tree-overview-entry" id="tree-overview-entry">
       <span class="oe-icon">🏠</span>
-      <span>总览</span>
+      <span id="tree-overview-label"></span>
       <span class="oe-badge" id="tree-overview-badge" style="display:none">0</span>
     </div>
     <div class="tree-search">
-      <input type="text" id="tree-search" placeholder="搜索池子 (Cmd/Ctrl+K 全局)…">
+      <input type="text" id="tree-search">
     </div>
-    <div id="tree-root"><div class="loading">加载池子…</div></div>
+    <div id="tree-root"><div class="loading"></div></div>
     <div id="hidden-pools-panel" style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px dashed var(--bg-3)"></div>
   </aside>
 
   <section class="main-panel">
-    <div class="breadcrumb" id="breadcrumb">未选择池子</div>
+    <div class="breadcrumb" id="breadcrumb"></div>
 
     <div class="tabs" id="tabs">
-      <div class="tab active" data-tab="alerts">告警</div>
-      <div class="tab" data-tab="overview">概览</div>
-      <div class="tab" data-tab="trend">趋势</div>
-      <div class="tab" data-tab="activity">活动</div>
-      <div class="tab" data-tab="holders">持仓</div>
-      <div class="tab" data-tab="permissions">权限</div>
+      <div class="tab active" data-tab="alerts"></div>
+      <div class="tab" data-tab="overview"></div>
+      <div class="tab" data-tab="trend"></div>
+      <div class="tab" data-tab="activity"></div>
+      <div class="tab" data-tab="holders"></div>
+      <div class="tab" data-tab="permissions"></div>
     </div>
 
     <div class="tab-content" id="tab-content">
-      <div class="empty">请从左侧选择一个池子开始查看</div>
+      <div class="empty"></div>
     </div>
   </section>
 </main>
 
 <footer class="alert-stream">
-  <div class="stream-title">📢 最近告警（全局，每 30s 刷新）</div>
-  <div id="alert-stream-body"><div class="loading">加载告警…</div></div>
+  <div class="stream-title" id="stream-title"></div>
+  <div id="alert-stream-body"><div class="loading"></div></div>
 </footer>
 
 <script>
@@ -1003,6 +1004,447 @@ function mockFetch(url) {
 if (MOCK) { window.fetch = mockFetch; console.log("[mock mode] fetch replaced"); }
 
 /* =========================================================
+   i18n dictionary + t() helper
+   覆盖:状态栏 / tab 名 / 按钮 / 表头 / 空状态 / banner / confirm
+   保留:emoji 图标、Symbol 代码 (USDC/WAVAX 等)、时间单位数字 (h/d/m/s)
+   ========================================================= */
+const I18N = {
+  zh: {
+    /* header / status bar */
+    brand_title: "w3_risk_dashboard",
+    st_monitor: "监控", st_alerts: "告警", st_snaps: "快照",
+    st_chains: "链", st_ws: "WS",
+    st_loading: "加载中…",
+    st_mon_running: "运行中", st_mon_down: "未运行",
+    st_mon_err: "接口异常",
+    st_mon_tip_running: "PID {0} · uptime {1}m",
+    st_mon_tip_down: "先跑 ./w3risk start",
+    st_alerts_tip: "数据库累计告警数（含已屏蔽）",
+    st_snaps_tip: "DB: {0}",
+    st_chains_tip: "已配置: {0}",
+    st_chains_none: "(无)",
+    st_ws_tip: "实时连接数",
+    cmdk_btn_title: "全局搜索 (Cmd/Ctrl+K)",
+
+    /* sidebar */
+    tree_overview: "总览",
+    tree_overview_title: "全局总览 (默认首页)",
+    tree_search_placeholder: "搜索池子 (Cmd/Ctrl+K 全局)…",
+    tree_loading: "加载池子…",
+    tree_empty: "暂无池子数据",
+    tree_load_failed: "加载池子失败: {0}",
+    tree_pool_badge_tip: "近 1 小时未屏蔽告警数",
+    hidden_pools_title: "🗑 已删除池子 ({0})",
+    hidden_pool_restore: "恢复",
+    hidden_pool_restoring: "恢复中…",
+    hidden_pool_restore_failed: "恢复失败: {0}",
+
+    /* tabs */
+    tab_alerts: "告警", tab_overview: "概览", tab_trend: "趋势",
+    tab_activity: "活动", tab_holders: "持仓", tab_permissions: "权限",
+    pick_pool: "请从左侧选择一个池子开始查看",
+    tab_load_failed: "数据加载失败，请稍后重试: {0}",
+    bc_dashboard_current: "🏠 全局总览",
+    bc_last_hour: "近 1 小时",
+    bc_home: "🏠 总览",
+    bc_no_pool: "未选择池子",
+    breadcrumb_root: "未选择池子",
+    toast_pick_pool_first: "请先从左侧或 Cmd/Ctrl+K 选择一个池子",
+
+    /* Cmd+K */
+    cmdk_placeholder: "搜索池子 (symbol / pool_key / chain) 或 '总览'…",
+    cmdk_nav_dashboard_label: "🏠 全局总览",
+    cmdk_nav_dashboard_sub: "Dashboard",
+    cmdk_hint_select: "选择", cmdk_hint_jump: "跳转", cmdk_hint_close: "关闭",
+    cmdk_empty: "无匹配结果",
+    cmdk_alert_suffix: "{0} 告警",
+
+    /* Dashboard */
+    dash_load_failed: "总览加载失败: {0}",
+    dash_monitored_pools: "监控池子",
+    dash_monitored_sub: "{0} 链 / {1} 协议",
+    dash_total_tvl: "总存款 TVL",
+    dash_total_borrow_sub: "总借款 {0}",
+    dash_weighted_util: "加权利用率",
+    dash_borrow_supply_sub: "borrow / supply",
+    dash_active_alerts: "激活告警 (近 1h · 未屏蔽)",
+    dash_alerts_sub: "严重 {0} · 告警 {1}",
+    dash_active_mutes: "当前屏蔽规则",
+    dash_muted_sub: "已屏蔽告警 {0} 条",
+    dash_section_hottest: "🔥 告警最多的池子",
+    dash_sub_hot_1h: "近 1h · 未屏蔽",
+    dash_no_alerts_1h: "✅ 近 1 小时无未屏蔽告警",
+    dash_section_util: "📈 利用率 TOP · 可能接近爆仓阈值",
+    dash_section_tight: "💧 流动性紧张 TOP · 可用流动性 / TVL 最小",
+    dash_section_mutes: "🔕 当前屏蔽规则",
+    dash_no_active_mutes: "当前无激活屏蔽",
+    dash_section_recent: "📢 最近告警",
+    dash_sub_all: "全部",
+    dash_no_recent: "✅ 暂无最近告警",
+    col_pool: "池子", col_alert_count_1h: "告警数 (1h)",
+    col_util: "利用率", col_avail_liquidity: "可用流动性",
+    col_tvl: "TVL", col_recent_alert: "最近告警",
+    col_rank: "#", col_avail_over_tvl: "可用/TVL", col_borrow: "借款",
+    col_rule: "规则", col_until: "到期", col_reason: "原因",
+    col_time: "时间", col_level: "级别", col_message: "消息",
+    col_event: "事件", col_user: "用户", col_amount_usd: "金额 (USD)",
+    col_token_amount: "代币数量", col_block: "区块", col_tx_hash: "TX Hash",
+    col_contract: "合约", col_meaning: "含义", col_old_new: "旧值 → 新值",
+    col_tx: "TX", col_address: "地址", col_atoken_bal: "aToken 余额",
+    col_balance_usd: "余额 USD", col_var_debt_usd: "变量债务 USD",
+    col_net_in_usd: "净流入 USD", col_supply_usd: "存款 USD",
+    col_withdraw_usd: "提款 USD", col_tx_count: "交易数",
+    col_action: "操作",
+    whole_pool: "整池", forever: "永久", none: "(无)",
+    cancel: "取消", cancel_failed: "取消失败: {0}",
+
+    /* Overview */
+    ov_supply_usd: "总存款 (Supply USD)",
+    ov_borrow_usd: "总借款 (Borrow USD)",
+    ov_util: "利用率",
+    ov_avail_liq: "可用流动性",
+    ov_price: "当前价格",
+    ov_block: "区块高度",
+    ov_last_update: "最近更新",
+    ov_proto_chain: "协议 / 链",
+    ov_asset_contract: "资产合约",
+    ov_copy: "复制",
+    ov_copied: "已复制",
+    ov_delete_hint: "🗑 从面板删除这个池子(停止采集 + 停止告警,可恢复)",
+    ov_delete_btn: "删除 {0}",
+    ov_load_failed: "数据加载失败: {0}",
+    ov_delete_confirm: "确认从面板删除 {0}({1})?\n\n• 监控进程会停止采集这个池子(无新快照)\n• 不再产生告警,不推 Lark\n• 侧栏将隐藏,但历史数据保留,可在侧栏底部\"已删除池子\"里恢复",
+    ov_delete_reason_prompt: "删除原因?(可留空)",
+    ov_delete_reason_default: "UI 删除",
+    ov_deleting: "删除中…",
+    ov_delete_failed: "删除失败: {0}",
+
+    /* Mute panel */
+    mute_loading: "加载屏蔽状态…",
+    mute_title: "🔕 告警屏蔽",
+    mute_whole_muted: "🔕 整个池子已屏蔽",
+    mute_until_label: "到期: {0}",
+    mute_reason_label: "原因: {0}",
+    mute_undo: "取消屏蔽",
+    mute_apply_prompt: "屏蔽此池子所有告警:",
+    mute_rule_level_title: "规则级屏蔽:",
+    mute_dur_30m: "30 分钟", mute_dur_2h: "2 小时",
+    mute_dur_24h: "24 小时", mute_dur_7d: "7 天", mute_dur_forever: "永久",
+    mute_reason_prompt: "屏蔽原因?(可留空)",
+    mute_processing: "处理中…",
+    mute_apply_failed: "屏蔽失败: {0}",
+    mute_undo_confirm_rule: "取消屏蔽规则 {0} ?",
+    mute_undo_confirm_whole: "取消屏蔽整个池子?",
+    mute_undo_confirm_pool_whole: "取消整池 {0} 的屏蔽?",
+
+    /* Trend */
+    trend_compare: "对比",
+    trend_stacked: "堆叠",
+    trend_compare_title: "三条线各自 y 轴自适应,放大波动细节 — 稳定币池推荐",
+    trend_stacked_title: "堆叠面积 Borrow + Liquidity ≈ Supply,展示池子结构",
+    trend_meta: "{0} 条快照 · 跨度 {1}",
+    trend_span_hour: "{0} 小时",
+    trend_span_min: "{0} 分钟",
+    trend_empty: "暂无数据",
+    trend_load_failed: "数据加载失败: {0}",
+    trend_tip_new_pool: "⚠️ 新接入池子,历史仅 {0} 条快照 / {1};至少等 1 小时再看完整趋势",
+    trend_tip_stable: "💡 此时段 Supply 变化仅 {0}% — 堆叠图呈平直是数据稳定所致;切\"对比\"模式可放大细节波动",
+    trend_legend_util: "利用率 %",
+    trend_legend_supply_ref: "Supply USD (参考)",
+
+    /* Activity */
+    act_min_usd: "最小金额 (USD)",
+    act_loading: "加载中…",
+    act_unavail: "数据不可用: {0}",
+    act_meta: "缓存于 {0} · 共 {1} 条",
+    act_empty: "暂无数据 (时间 {0}h · 阈值 {1})",
+    act_inflow: "流入 (Supply + Repay)",
+    act_outflow: "流出 (Withdraw + Borrow)",
+    act_liquidation: "清算 (Liquidation)",
+    act_net: "净差值 (In − Out)",
+    act_copy_tx_title: "复制完整 TX Hash",
+
+    /* Holders */
+    hol_method_auto: "自动",
+    hol_method_subgraph: "静态余额 (The Graph)",
+    hol_method_net_flow: "净流入",
+    hol_desc_subgraph: "按 aToken 持仓余额(含累积利息)静态排名 · 来源:The Graph subgraph",
+    hol_desc_net_flow: "按最近 {0} Supply - Withdraw 净流入排名(正=净流入,负=净流出)",
+    hol_empty_sub: "暂无持仓数据",
+    hol_empty_net: "暂无数据 ({0}h 窗口内无活动)",
+    hol_unavail: "数据不可用: {0}",
+
+    /* Permissions */
+    perm_pool_not_found: "未找到池子信息",
+    perm_header: "协议级别权限事件 · {0} / {1}",
+    perm_scanning: "🔄 正在扫 RPC 日志获取权限事件…",
+    perm_scan_meta: "预期耗时 {0}(首次) · 已用 {1} 秒 · 之后会缓存",
+    perm_scan_unit_long: "15–40 秒",
+    perm_scan_unit_mid: "10–25 秒",
+    perm_scan_unit_short: "5–15 秒",
+    perm_unavail: "数据不可用: {0}",
+    perm_empty_ok: "✅ 近 {0}无权限变更（正常）",
+    perm_range_24h: "24 小时", perm_range_3d: "3 天", perm_range_7d: "7 天",
+    perm_on_asset: "(on {0})",
+
+    /* Alerts tab */
+    al_no_history: "✅ 无历史告警",
+    al_unavail: "数据不可用: {0}",
+    al_expand: "展开", al_collapse: "收起",
+    al_agg_tip: "60s 内同规则重复 {0} 次",
+    al_first_seen: "首次 {0}",
+    al_muted_label: "✅ 屏蔽中{0} · {1}",
+    al_muted_scope_whole: "(整池)",
+    al_muted_tip: "{0} · 到期 {1}",
+    al_muted_reason_empty: "(无原因)",
+    al_mute_rule_btn: "🔕 屏蔽 7d",
+    al_mute_rule_btn_title: "屏蔽这条规则 7 天",
+    al_mute_rule_prompt: "屏蔽规则 {0} 7 天,原因?",
+    al_mute_rule_default: "UI 触发",
+
+    /* Bottom alert stream */
+    stream_title: "📢 最近告警（全局，每 30s 刷新）",
+    stream_loading: "加载告警…",
+    stream_empty: "✅ 暂无最近告警",
+    stream_load_failed: "加载告警失败: {0}",
+    stream_agg_tip: "60s 内重复 {0} 次",
+
+    /* Time ago */
+    ago_sec: "{0} 秒前",
+    ago_min: "{0} 分钟前",
+    ago_hour: "{0} 小时前",
+    ago_day: "{0} 天前",
+
+    /* Lang switch button — 显示目标语言 */
+    lang_switch_to_en: "EN",
+    lang_switch_to_zh: "中",
+    lang_switch_title: "切换到英文 / Switch to English",
+  },
+  en: {
+    brand_title: "w3_risk_dashboard",
+    st_monitor: "Monitor", st_alerts: "Alerts", st_snaps: "Snapshots",
+    st_chains: "Chains", st_ws: "WS",
+    st_loading: "Loading…",
+    st_mon_running: "Running", st_mon_down: "Stopped",
+    st_mon_err: "API error",
+    st_mon_tip_running: "PID {0} · uptime {1}m",
+    st_mon_tip_down: "Run ./w3risk start first",
+    st_alerts_tip: "Cumulative DB alerts (incl. muted)",
+    st_snaps_tip: "DB: {0}",
+    st_chains_tip: "Configured: {0}",
+    st_chains_none: "(none)",
+    st_ws_tip: "Live connections",
+    cmdk_btn_title: "Global search (Cmd/Ctrl+K)",
+
+    tree_overview: "Dashboard",
+    tree_overview_title: "Global dashboard (home)",
+    tree_search_placeholder: "Search pools (Cmd/Ctrl+K global)…",
+    tree_loading: "Loading pools…",
+    tree_empty: "No pools",
+    tree_load_failed: "Failed to load pools: {0}",
+    tree_pool_badge_tip: "Unmuted alerts in last 1 hour",
+    hidden_pools_title: "🗑 Deleted pools ({0})",
+    hidden_pool_restore: "Restore",
+    hidden_pool_restoring: "Restoring…",
+    hidden_pool_restore_failed: "Restore failed: {0}",
+
+    tab_alerts: "Alerts", tab_overview: "Overview", tab_trend: "Trend",
+    tab_activity: "Activity", tab_holders: "Holders", tab_permissions: "Permissions",
+    pick_pool: "Pick a pool from the sidebar to get started",
+    tab_load_failed: "Failed to load, try again: {0}",
+    bc_dashboard_current: "🏠 Global Dashboard",
+    bc_last_hour: "last 1 hour",
+    bc_home: "🏠 Dashboard",
+    bc_no_pool: "No pool selected",
+    breadcrumb_root: "No pool selected",
+    toast_pick_pool_first: "Pick a pool from the sidebar or Cmd/Ctrl+K",
+
+    cmdk_placeholder: "Search pools (symbol / pool_key / chain) or 'dashboard'…",
+    cmdk_nav_dashboard_label: "🏠 Global Dashboard",
+    cmdk_nav_dashboard_sub: "Dashboard",
+    cmdk_hint_select: "select", cmdk_hint_jump: "jump", cmdk_hint_close: "close",
+    cmdk_empty: "No match",
+    cmdk_alert_suffix: "{0} alerts",
+
+    dash_load_failed: "Dashboard load failed: {0}",
+    dash_monitored_pools: "Monitored pools",
+    dash_monitored_sub: "{0} chains / {1} protocols",
+    dash_total_tvl: "Total Supply TVL",
+    dash_total_borrow_sub: "Total Borrow {0}",
+    dash_weighted_util: "Weighted Utilization",
+    dash_borrow_supply_sub: "borrow / supply",
+    dash_active_alerts: "Active Alerts (1h · unmuted)",
+    dash_alerts_sub: "Critical {0} · Alert {1}",
+    dash_active_mutes: "Active Mutes",
+    dash_muted_sub: "{0} alerts muted",
+    dash_section_hottest: "🔥 Hottest pools by alerts",
+    dash_sub_hot_1h: "last 1h · unmuted",
+    dash_no_alerts_1h: "✅ No unmuted alerts in the last hour",
+    dash_section_util: "📈 TOP Utilization · near liquidation threshold",
+    dash_section_tight: "💧 TOP Tight Liquidity · lowest available / TVL",
+    dash_section_mutes: "🔕 Active Mutes",
+    dash_no_active_mutes: "No active mutes",
+    dash_section_recent: "📢 Recent alerts",
+    dash_sub_all: "all",
+    dash_no_recent: "✅ No recent alerts",
+    col_pool: "Pool", col_alert_count_1h: "Alerts (1h)",
+    col_util: "Util", col_avail_liquidity: "Available",
+    col_tvl: "TVL", col_recent_alert: "Last alert",
+    col_rank: "#", col_avail_over_tvl: "Avail/TVL", col_borrow: "Borrow",
+    col_rule: "Rule", col_until: "Until", col_reason: "Reason",
+    col_time: "Time", col_level: "Level", col_message: "Message",
+    col_event: "Event", col_user: "User", col_amount_usd: "Amount (USD)",
+    col_token_amount: "Tokens", col_block: "Block", col_tx_hash: "TX Hash",
+    col_contract: "Contract", col_meaning: "Meaning", col_old_new: "Old → New",
+    col_tx: "TX", col_address: "Address", col_atoken_bal: "aToken Balance",
+    col_balance_usd: "Balance USD", col_var_debt_usd: "Var Debt USD",
+    col_net_in_usd: "Net Inflow USD", col_supply_usd: "Supply USD",
+    col_withdraw_usd: "Withdraw USD", col_tx_count: "Tx count",
+    col_action: "Action",
+    whole_pool: "whole pool", forever: "forever", none: "(none)",
+    cancel: "Cancel", cancel_failed: "Cancel failed: {0}",
+
+    ov_supply_usd: "Total Supply (USD)",
+    ov_borrow_usd: "Total Borrow (USD)",
+    ov_util: "Utilization",
+    ov_avail_liq: "Available Liquidity",
+    ov_price: "Price",
+    ov_block: "Block",
+    ov_last_update: "Last update",
+    ov_proto_chain: "Protocol / Chain",
+    ov_asset_contract: "Asset Contract",
+    ov_copy: "Copy",
+    ov_copied: "Copied",
+    ov_delete_hint: "🗑 Remove this pool from the panel (stops collection & alerts, reversible)",
+    ov_delete_btn: "Delete {0}",
+    ov_load_failed: "Load failed: {0}",
+    ov_delete_confirm: "Confirm removing {0} ({1}) from the panel?\n\n• Monitor stops collecting (no new snapshots)\n• No more alerts, no Lark push\n• Sidebar hides it, but history is kept — restore from \"Deleted pools\" at the bottom",
+    ov_delete_reason_prompt: "Reason for removal? (optional)",
+    ov_delete_reason_default: "UI removed",
+    ov_deleting: "Removing…",
+    ov_delete_failed: "Remove failed: {0}",
+
+    mute_loading: "Loading mute state…",
+    mute_title: "🔕 Alert Mute",
+    mute_whole_muted: "🔕 Whole pool muted",
+    mute_until_label: "Until: {0}",
+    mute_reason_label: "Reason: {0}",
+    mute_undo: "Unmute",
+    mute_apply_prompt: "Mute all alerts for this pool:",
+    mute_rule_level_title: "Rule-level mutes:",
+    mute_dur_30m: "30 min", mute_dur_2h: "2 hours",
+    mute_dur_24h: "24 hours", mute_dur_7d: "7 days", mute_dur_forever: "forever",
+    mute_reason_prompt: "Mute reason? (optional)",
+    mute_processing: "Working…",
+    mute_apply_failed: "Mute failed: {0}",
+    mute_undo_confirm_rule: "Unmute rule {0} ?",
+    mute_undo_confirm_whole: "Unmute the whole pool?",
+    mute_undo_confirm_pool_whole: "Unmute the whole pool {0} ?",
+
+    trend_compare: "Compare",
+    trend_stacked: "Stacked",
+    trend_compare_title: "Each line auto-scales its own y axis to magnify detail — recommended for stablecoins",
+    trend_stacked_title: "Stacked areas Borrow + Liquidity ≈ Supply, shows pool composition",
+    trend_meta: "{0} snapshots · span {1}",
+    trend_span_hour: "{0} hours",
+    trend_span_min: "{0} minutes",
+    trend_empty: "No data",
+    trend_load_failed: "Load failed: {0}",
+    trend_tip_new_pool: "⚠️ Newly tracked pool, only {0} snapshots / {1}; wait at least 1 hour for full trend",
+    trend_tip_stable: "💡 Supply changed only {0}% in this window — stacked chart looks flat because data is stable; switch to \"Compare\" to magnify details",
+    trend_legend_util: "Utilization %",
+    trend_legend_supply_ref: "Supply USD (ref)",
+
+    act_min_usd: "Min amount (USD)",
+    act_loading: "Loading…",
+    act_unavail: "Unavailable: {0}",
+    act_meta: "Cached {0} · {1} events",
+    act_empty: "No data ({0}h · threshold {1})",
+    act_inflow: "Inflow (Supply + Repay)",
+    act_outflow: "Outflow (Withdraw + Borrow)",
+    act_liquidation: "Liquidation",
+    act_net: "Net (In − Out)",
+    act_copy_tx_title: "Copy full TX hash",
+
+    hol_method_auto: "Auto",
+    hol_method_subgraph: "Static balance (The Graph)",
+    hol_method_net_flow: "Net inflow",
+    hol_desc_subgraph: "Ranked by aToken balance (incl. interest) · source: The Graph subgraph",
+    hol_desc_net_flow: "Ranked by Supply − Withdraw net inflow over the last {0} (+ = inflow, − = outflow)",
+    hol_empty_sub: "No holders data",
+    hol_empty_net: "No data (no activity in {0}h window)",
+    hol_unavail: "Unavailable: {0}",
+
+    perm_pool_not_found: "Pool not found",
+    perm_header: "Protocol-level permission events · {0} / {1}",
+    perm_scanning: "🔄 Scanning RPC logs for permission events…",
+    perm_scan_meta: "Expected {0} (first time) · elapsed {1}s · cached afterwards",
+    perm_scan_unit_long: "15–40s",
+    perm_scan_unit_mid: "10–25s",
+    perm_scan_unit_short: "5–15s",
+    perm_unavail: "Unavailable: {0}",
+    perm_empty_ok: "✅ No permission changes in the last {0} (OK)",
+    perm_range_24h: "24 hours", perm_range_3d: "3 days", perm_range_7d: "7 days",
+    perm_on_asset: "(on {0})",
+
+    al_no_history: "✅ No alert history",
+    al_unavail: "Unavailable: {0}",
+    al_expand: "Expand", al_collapse: "Collapse",
+    al_agg_tip: "Same rule repeated {0} times within 60s",
+    al_first_seen: "first {0}",
+    al_muted_label: "✅ Muted{0} · {1}",
+    al_muted_scope_whole: " (whole pool)",
+    al_muted_tip: "{0} · until {1}",
+    al_muted_reason_empty: "(no reason)",
+    al_mute_rule_btn: "🔕 Mute 7d",
+    al_mute_rule_btn_title: "Mute this rule for 7 days",
+    al_mute_rule_prompt: "Mute rule {0} for 7 days — reason?",
+    al_mute_rule_default: "UI triggered",
+
+    stream_title: "📢 Recent alerts (global, refresh every 30s)",
+    stream_loading: "Loading alerts…",
+    stream_empty: "✅ No recent alerts",
+    stream_load_failed: "Failed to load alerts: {0}",
+    stream_agg_tip: "Repeated {0} times within 60s",
+
+    ago_sec: "{0}s ago",
+    ago_min: "{0}m ago",
+    ago_hour: "{0}h ago",
+    ago_day: "{0}d ago",
+
+    lang_switch_to_en: "EN",
+    lang_switch_to_zh: "中",
+    lang_switch_title: "Switch to 中文 / 切换到中文",
+  },
+};
+const LANG_LS_KEY = "w3risk.lang";
+function _loadLang() {
+  try {
+    const v = localStorage.getItem(LANG_LS_KEY);
+    return (v === "en" || v === "zh") ? v : "zh";
+  } catch { return "zh"; }
+}
+function _saveLang(lang) {
+  try { localStorage.setItem(LANG_LS_KEY, lang); } catch {}
+}
+function t(key, ...args) {
+  const lang = (state && state.lang) || "zh";
+  const dict = I18N[lang] || I18N.zh;
+  let s = dict[key];
+  if (s == null) {
+    // fallback to zh, then key
+    s = (I18N.zh && I18N.zh[key]) || key;
+  }
+  if (args.length) {
+    s = s.replace(/\{(\d+)\}/g, (_, i) => {
+      const v = args[parseInt(i)];
+      return v == null ? "" : String(v);
+    });
+  }
+  return s;
+}
+
+/* =========================================================
    i18n maps
    ========================================================= */
 const CHAIN_ZH = {
@@ -1136,9 +1578,9 @@ function showToast(text, ms=1500) {
 async function copyText(txt) {
   try {
     await navigator.clipboard.writeText(txt);
-    showToast("已复制");
+    showToast(t("ov_copied"));
   } catch {
-    showToast("复制失败");
+    showToast(state.lang === "en" ? "Copy failed" : "复制失败");
   }
 }
 
@@ -1192,6 +1634,7 @@ const state = {
   alertSummaryTotal: 0,
   mutes: [],                       // cached /api/mutes
   cmdkOpen: false,
+  lang: _loadLang(),               // 'zh' | 'en', 持久化到 localStorage
 };
 
 /* =========================================================
@@ -1206,16 +1649,18 @@ function _setChip(id, cls, icon, label, value, title) {
 }
 
 function applyStatus(s) {
+  // 缓存最近一次 raw status,用于语言切换时重绘
+  if (s) state._lastStatus = s;
   if (!s || !s.ok) {
-    _setChip("st-monitor", "down", "⭕", "监控", "接口异常");
+    _setChip("st-monitor", "down", "⭕", t("st_monitor"), t("st_mon_err"));
     return;
   }
   if (s.monitor_running) {
-    _setChip("st-monitor", "up", "🟢", "监控", "运行中",
-      `PID ${s.monitor_pid} · uptime ${Math.round((s.uptime_sec || 0) / 60)}m`);
+    _setChip("st-monitor", "up", "🟢", t("st_monitor"), t("st_mon_running"),
+      t("st_mon_tip_running", s.monitor_pid, Math.round((s.uptime_sec || 0) / 60)));
   } else {
-    _setChip("st-monitor", "down", "⭕", "监控", "未运行",
-      "先跑 ./w3risk start");
+    _setChip("st-monitor", "down", "⭕", t("st_monitor"), t("st_mon_down"),
+      t("st_mon_tip_down"));
   }
   const db = s.db || {};
   const alerts = db.alerts ?? 0;
@@ -1223,15 +1668,14 @@ function applyStatus(s) {
   let alertCls = "";
   if (alerts >= 100) alertCls = "alerts-crit";
   else if (alerts > 0) alertCls = "alerts-hot";
-  _setChip("st-alerts", alertCls, "🚨", "告警", String(alerts),
-    "数据库累计告警数（含已屏蔽）");
-  _setChip("st-snaps", "", "💾", "快照", String(db.snapshots ?? "?"),
-    `DB: ${db.path || ""}`);
+  _setChip("st-alerts", alertCls, "🚨", t("st_alerts"), String(alerts), t("st_alerts_tip"));
+  _setChip("st-snaps", "", "💾", t("st_snaps"), String(db.snapshots ?? "?"),
+    t("st_snaps_tip", db.path || ""));
   const chains = (s.chains_configured || []).length;
-  _setChip("st-rpc", "", "📡", "链", String(chains),
-    `已配置: ${(s.chains_configured || []).join(", ") || "(无)"}`);
+  _setChip("st-rpc", "", "📡", t("st_chains"), String(chains),
+    t("st_chains_tip", (s.chains_configured || []).join(", ") || t("st_chains_none")));
   if (typeof s.ws_clients === "number") {
-    _setChip("st-ws", "", "⚡", "WS", String(s.ws_clients), "实时连接数");
+    _setChip("st-ws", "", "⚡", t("st_ws"), String(s.ws_clients), t("st_ws_tip"));
     document.getElementById("st-ws").style.display = "";
   } else {
     document.getElementById("st-ws").style.display = "none";
@@ -1241,6 +1685,92 @@ function applyStatus(s) {
 async function refreshStatus() {
   const s = await api("/api/status");
   applyStatus(s);
+}
+
+/* ---------- 静态文案翻译(HTML 里固定的元素,无法靠 render 重绘)---------- */
+function applyStaticI18n() {
+  // 页面 <title>(如果有)保持不翻
+  // 左侧 tree 静态元素
+  const overviewLabel = document.getElementById("tree-overview-label");
+  if (overviewLabel) overviewLabel.textContent = t("tree_overview");
+  const overviewEntry = document.getElementById("tree-overview-entry");
+  if (overviewEntry) overviewEntry.title = t("tree_overview_title");
+  const treeSearch = document.getElementById("tree-search");
+  if (treeSearch) treeSearch.placeholder = t("tree_search_placeholder");
+  // tree-root 的 loading 占位只有首次会在,别强行覆盖有数据时
+  const treeRoot = document.getElementById("tree-root");
+  if (treeRoot) {
+    const loading = treeRoot.querySelector(".loading");
+    if (loading && loading.textContent === "") loading.textContent = t("tree_loading");
+  }
+  // 顶栏 chip label(applyStatus 会覆盖 val;lbl 走 _setChip,这里只兜底)
+  const chipLabels = {
+    "st-monitor": "st_monitor", "st-alerts": "st_alerts",
+    "st-snaps": "st_snaps", "st-rpc": "st_chains", "st-ws": "st_ws",
+  };
+  for (const [id, key] of Object.entries(chipLabels)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const lblEl = el.querySelector(".lbl");
+    if (lblEl && !lblEl.textContent.trim()) lblEl.textContent = t(key);
+    const valEl = el.querySelector(".val");
+    if (valEl && !valEl.textContent.trim() && id === "st-monitor") valEl.textContent = t("st_loading");
+  }
+  // Cmd+K 按钮 tooltip
+  const cmdkBtn = document.getElementById("cmdk-btn");
+  if (cmdkBtn) cmdkBtn.title = t("cmdk_btn_title");
+  // 顶栏 tab 名
+  const TAB_LABELS = {
+    alerts: "tab_alerts", overview: "tab_overview", trend: "tab_trend",
+    activity: "tab_activity", holders: "tab_holders", permissions: "tab_permissions",
+  };
+  document.querySelectorAll(".tabs .tab").forEach(el => {
+    const key = TAB_LABELS[el.dataset.tab];
+    if (key) el.textContent = t(key);
+  });
+  // 底部 stream
+  const streamTitle = document.getElementById("stream-title");
+  if (streamTitle) streamTitle.textContent = t("stream_title");
+  const streamBody = document.getElementById("alert-stream-body");
+  if (streamBody) {
+    const loading = streamBody.querySelector(".loading");
+    if (loading && !loading.textContent.trim()) loading.textContent = t("stream_loading");
+  }
+  // tab content 初始占位 (empty)
+  const tabContent = document.getElementById("tab-content");
+  if (tabContent) {
+    const empty = tabContent.querySelector(":scope > .empty");
+    if (empty && !empty.textContent.trim()) empty.textContent = t("pick_pool");
+  }
+  // lang-switch button — 显示"切换到"的目标语言
+  const lsBtn = document.getElementById("lang-switch");
+  if (lsBtn) {
+    const target = state.lang === "zh" ? "en" : "zh";
+    lsBtn.textContent = target === "en" ? t("lang_switch_to_en") : t("lang_switch_to_zh");
+    lsBtn.title = t("lang_switch_title");
+  }
+}
+
+/* ---------- 切换语言 ---------- */
+function setLang(lang) {
+  if (lang !== "zh" && lang !== "en") return;
+  if (state.lang === lang) return;
+  state.lang = lang;
+  _saveLang(lang);
+  rerenderAll();
+}
+
+/* ---------- 整站重绘(切换语言后调用) ---------- */
+function rerenderAll() {
+  applyStaticI18n();
+  // applyStatus 依赖上次的 raw status;如无,不重绘(会在下一次 refreshStatus 自动带上)
+  if (state._lastStatus) applyStatus(state._lastStatus);
+  renderBreadcrumb();
+  try { renderTree(document.getElementById("tree-search")?.value || ""); } catch {}
+  try { renderHiddenPoolsPanel(); } catch {}
+  try { renderAlertStream(); } catch {}
+  try { refreshAlertSummary(); } catch {}
+  renderTab();
 }
 
 /* =========================================================
@@ -1303,7 +1833,7 @@ async function loadPools() {
   const tree = {};
   if (!r.ok) {
     document.getElementById("tree-root").innerHTML =
-      `<div class="error">加载池子失败: ${r.error}</div>`;
+      `<div class="error">${t("tree_load_failed", r.error)}</div>`;
     return;
   }
   state.pools = r.pools || [];
@@ -1320,7 +1850,7 @@ function renderTree(filter="") {
   const root = document.getElementById("tree-root");
   const protos = Object.keys(state.tree).sort();
   if (protos.length === 0) {
-    root.innerHTML = `<div class="empty">暂无池子数据</div>`;
+    root.innerHTML = `<div class="empty">${t("tree_empty")}</div>`;
     return;
   }
   const f = filter.trim().toLowerCase();
@@ -1355,7 +1885,7 @@ function renderTree(filter="") {
           const alertCount = (state.alertSummary && state.alertSummary[pl.pool_key]) || 0;
           // 告警徽章:>=3 红 / 1-2 橙 / 0 隐藏
           const badgeHtml = alertCount > 0
-            ? `<span class="pool-badge${alertCount < 3 ? " warn" : ""}" title="近 1 小时未屏蔽告警数">${alertCount > 99 ? "99+" : alertCount}</span>`
+            ? `<span class="pool-badge${alertCount < 3 ? " warn" : ""}" title="${t("tree_pool_badge_tip")}">${alertCount > 99 ? "99+" : alertCount}</span>`
             : "";
           poolEl.innerHTML =
             `<span>• ${pl.symbol}${badgeHtml}</span>` +
@@ -1391,11 +1921,11 @@ document.getElementById("tree-search").addEventListener("input", (e) => {
 function renderBreadcrumb() {
   const bc = document.getElementById("breadcrumb");
   if (state.currentTab === "__dashboard__") {
-    bc.innerHTML = `<span class="current">🏠 全局总览</span><span class="sep">·</span>近 1 小时`;
+    bc.innerHTML = `<span class="current">${t("bc_dashboard_current")}</span><span class="sep">·</span>${t("bc_last_hour")}`;
     return;
   }
   if (!state.currentPoolKey) {
-    bc.innerHTML = `<span style="cursor:pointer" onclick="goDashboard()">🏠 总览</span><span class="sep">·</span>未选择池子`;
+    bc.innerHTML = `<span style="cursor:pointer" onclick="goDashboard()">${t("bc_home")}</span><span class="sep">·</span>${t("bc_no_pool")}`;
     return;
   }
   const p = state.pools.find(x => x.pool_key === state.currentPoolKey);
@@ -1459,7 +1989,7 @@ document.querySelectorAll(".tab").forEach(el => {
     const t = el.dataset.tab;
     // 总览模式下点 tab 不做切换,提示先选池子
     if (!state.currentPoolKey) {
-      showToast("请先从左侧或 Cmd/Ctrl+K 选择一个池子");
+      showToast(t("toast_pick_pool_first"));
       return;
     }
     state.currentTab = t;
@@ -1528,12 +2058,12 @@ async function renderTab() {
     state.currentTab = "__dashboard__";
     box.innerHTML = _skeletonFor("__dashboard__");
     try { await renderDashboard(box); }
-    catch (e) { console.error(e); box.innerHTML = `<div class="error">总览加载失败: ${e.message}</div>`; }
+    catch (e) { console.error(e); box.innerHTML = `<div class="error">${t("dash_load_failed", e.message)}</div>`; }
     _syncOverviewEntryActive();
     return;
   }
   if (!state.currentPoolKey) {
-    box.innerHTML = `<div class="empty">请从左侧选择一个池子开始查看</div>`;
+    box.innerHTML = `<div class="empty">${t("pick_pool")}</div>`;
     return;
   }
   _syncOverviewEntryActive();
@@ -1548,7 +2078,7 @@ async function renderTab() {
     else if (state.currentTab === "alerts")    await renderAlerts(box, pk);
   } catch (e) {
     console.error(e);
-    box.innerHTML = `<div class="error">数据加载失败，请稍后重试: ${e.message}</div>`;
+    box.innerHTML = `<div class="error">${t("tab_load_failed", e.message)}</div>`;
   }
 }
 
@@ -1572,7 +2102,7 @@ function _cmdkBuildItems(q) {
   // 静态入口
   if (!query || "总览".includes(query) || "home".includes(query) || "dashboard".includes(query)) {
     items.push({
-      type: "nav", label: "🏠 全局总览", sub: "Dashboard",
+      type: "nav", label: t("cmdk_nav_dashboard_label"), sub: t("cmdk_nav_dashboard_sub"),
       onSelect: () => goDashboard(),
     });
   }
@@ -1581,7 +2111,7 @@ function _cmdkBuildItems(q) {
     const hay = [p.symbol, p.pool_key, p.chain, p.protocol].join(" ").toLowerCase();
     if (query && !hay.includes(query)) continue;
     const cnt = (state.alertSummary && state.alertSummary[p.pool_key]) || 0;
-    const sub = `${_chainZh(p.chain)} · ${_protocolZh(p.protocol)}${cnt > 0 ? ` · ${cnt} 告警` : ""}`;
+    const sub = `${_chainZh(p.chain)} · ${_protocolZh(p.protocol)}${cnt > 0 ? ` · ${t("cmdk_alert_suffix", cnt)}` : ""}`;
     items.push({
       type: "pool",
       label: `${p.symbol} <span style="color:var(--text-3);font-family:var(--font-mono);font-size:11px">${p.pool_key}</span>${cnt > 0 ? `<span class="agg-count">${cnt}</span>` : ""}`,
@@ -1602,7 +2132,7 @@ function _cmdkRender(q) {
       <span>${it.label}</span>
       <span class="cmdk-sub">${it.sub || ""}</span>
     </div>
-  `).join("") || `<div class="empty" style="padding:16px">无匹配结果</div>`;
+  `).join("") || `<div class="empty" style="padding:16px">${t("cmdk_empty")}</div>`;
   listEl.querySelectorAll(".cmdk-item").forEach(el => {
     el.onclick = () => {
       const i = parseInt(el.dataset.i);
@@ -1625,12 +2155,12 @@ function openCmdK() {
   overlay.id = "cmdk-overlay";
   overlay.innerHTML = `
     <div class="cmdk-panel" onclick="event.stopPropagation()">
-      <input type="text" class="cmdk-input" id="cmdk-input" placeholder="搜索池子 (symbol / pool_key / chain) 或 '总览'…" autocomplete="off">
+      <input type="text" class="cmdk-input" id="cmdk-input" placeholder="${t("cmdk_placeholder")}" autocomplete="off">
       <div class="cmdk-list" id="cmdk-list"></div>
       <div class="cmdk-hint">
-        <span class="cmdk-kbd">↑</span><span class="cmdk-kbd">↓</span> 选择
-        &nbsp;&nbsp;<span class="cmdk-kbd">Enter</span> 跳转
-        &nbsp;&nbsp;<span class="cmdk-kbd">Esc</span> 关闭
+        <span class="cmdk-kbd">↑</span><span class="cmdk-kbd">↓</span> ${t("cmdk_hint_select")}
+        &nbsp;&nbsp;<span class="cmdk-kbd">Enter</span> ${t("cmdk_hint_jump")}
+        &nbsp;&nbsp;<span class="cmdk-kbd">Esc</span> ${t("cmdk_hint_close")}
       </div>
     </div>
   `;
@@ -1710,29 +2240,29 @@ async function renderDashboard(box) {
   const stats = `
     <div class="dashboard-grid">
       <div class="dash-stat">
-        <span class="lbl">监控池子</span>
+        <span class="lbl">${t("dash_monitored_pools")}</span>
         <span class="num">${pools.length}</span>
-        <span class="sub">${new Set(pools.map(p => p.chain)).size} 链 / ${new Set(pools.map(p => p.protocol)).size} 协议</span>
+        <span class="sub">${t("dash_monitored_sub", new Set(pools.map(p => p.chain)).size, new Set(pools.map(p => p.protocol)).size)}</span>
       </div>
       <div class="dash-stat">
-        <span class="lbl">总存款 TVL</span>
+        <span class="lbl">${t("dash_total_tvl")}</span>
         <span class="num">${fmtUSD(totalTvl)}</span>
-        <span class="sub">总借款 ${fmtUSD(totalBorrow)}</span>
+        <span class="sub">${t("dash_total_borrow_sub", fmtUSD(totalBorrow))}</span>
       </div>
       <div class="dash-stat ${avgUtil >= 90 ? 'warn' : ''}">
-        <span class="lbl">加权利用率</span>
+        <span class="lbl">${t("dash_weighted_util")}</span>
         <span class="num">${avgUtil.toFixed(1)}%</span>
-        <span class="sub">borrow / supply</span>
+        <span class="sub">${t("dash_borrow_supply_sub")}</span>
       </div>
       <div class="dash-stat ${critical > 0 ? 'danger' : (sum.total > 0 ? 'warn' : 'success')}">
-        <span class="lbl">激活告警 (近 1h · 未屏蔽)</span>
+        <span class="lbl">${t("dash_active_alerts")}</span>
         <span class="num">${sum.total || 0}</span>
-        <span class="sub">严重 ${critical} · 告警 ${(sum.by_level && sum.by_level.alert) || 0}</span>
+        <span class="sub">${t("dash_alerts_sub", critical, (sum.by_level && sum.by_level.alert) || 0)}</span>
       </div>
       <div class="dash-stat ${mutes.length ? 'info' : ''}">
-        <span class="lbl">当前屏蔽规则</span>
+        <span class="lbl">${t("dash_active_mutes")}</span>
         <span class="num">${mutes.length}</span>
-        <span class="sub">已屏蔽告警 ${sum.muted_total || 0} 条</span>
+        <span class="sub">${t("dash_muted_sub", sum.muted_total || 0)}</span>
       </div>
     </div>
   `;
@@ -1743,15 +2273,15 @@ async function renderDashboard(box) {
     .slice(0, 10);
 
   const hottestHtml = hottest.length === 0
-    ? `<div class="empty" style="color:var(--success);padding:20px">✅ 近 1 小时无未屏蔽告警</div>`
+    ? `<div class="empty" style="color:var(--success);padding:20px">${t("dash_no_alerts_1h")}</div>`
     : `<table class="data-table">
         <thead><tr>
-          <th>池子</th>
-          <th class="num">告警数 (1h)</th>
-          <th class="num">利用率</th>
-          <th class="num">可用流动性</th>
-          <th class="num">TVL</th>
-          <th>最近告警</th>
+          <th>${t("col_pool")}</th>
+          <th class="num">${t("col_alert_count_1h")}</th>
+          <th class="num">${t("col_util")}</th>
+          <th class="num">${t("col_avail_liquidity")}</th>
+          <th class="num">${t("col_tvl")}</th>
+          <th>${t("col_recent_alert")}</th>
         </tr></thead>
         <tbody>
         ${hottest.map(([pk, cnt]) => {
@@ -1779,10 +2309,10 @@ async function renderDashboard(box) {
   // 利用率 top 8
   const utilHtml = `<table class="data-table">
     <thead><tr>
-      <th>#</th><th>池子</th>
-      <th class="num">利用率</th>
-      <th class="num">TVL</th>
-      <th class="num">可用流动性</th>
+      <th>${t("col_rank")}</th><th>${t("col_pool")}</th>
+      <th class="num">${t("col_util")}</th>
+      <th class="num">${t("col_tvl")}</th>
+      <th class="num">${t("col_avail_liquidity")}</th>
     </tr></thead>
     <tbody>
     ${byUtil.map((p, i) => {
@@ -1805,10 +2335,10 @@ async function renderDashboard(box) {
   // 流动性紧张 top 8
   const tightHtml = `<table class="data-table">
     <thead><tr>
-      <th>#</th><th>池子</th>
-      <th class="num">可用/TVL</th>
-      <th class="num">可用流动性</th>
-      <th class="num">借款</th>
+      <th>${t("col_rank")}</th><th>${t("col_pool")}</th>
+      <th class="num">${t("col_avail_over_tvl")}</th>
+      <th class="num">${t("col_avail_liquidity")}</th>
+      <th class="num">${t("col_borrow")}</th>
     </tr></thead>
     <tbody>
     ${byTight.map((p, i) => {
@@ -1831,32 +2361,32 @@ async function renderDashboard(box) {
 
   // 当前屏蔽规则表
   const mutesHtml = mutes.length === 0
-    ? `<div class="empty" style="padding:16px">当前无激活屏蔽</div>`
+    ? `<div class="empty" style="padding:16px">${t("dash_no_active_mutes")}</div>`
     : `<table class="data-table">
         <thead><tr>
-          <th>池子</th><th>规则</th><th>到期</th><th>原因</th><th></th>
+          <th>${t("col_pool")}</th><th>${t("col_rule")}</th><th>${t("col_until")}</th><th>${t("col_reason")}</th><th></th>
         </tr></thead>
         <tbody>
         ${mutes.map(m => `
           <tr>
             <td><span class="mono" style="cursor:pointer" onclick="selectPool('${m.pool_key}', 'overview')">${m.pool_key}</span></td>
-            <td>${m.rule ? `<code style="color:var(--warn)">${m.rule}</code>` : `<span style="color:var(--warning-y)">整池</span>`}</td>
-            <td>${m.human_until || "永久"}</td>
-            <td style="color:var(--text-2)">${m.reason || "(无)"}</td>
-            <td><button class="btn-ghost-danger dash-mute-undo" data-pk="${m.pool_key}" data-rule="${m.rule || ''}">取消</button></td>
+            <td>${m.rule ? `<code style="color:var(--warn)">${m.rule}</code>` : `<span style="color:var(--warning-y)">${t("whole_pool")}</span>`}</td>
+            <td>${m.human_until || t("forever")}</td>
+            <td style="color:var(--text-2)">${m.reason || t("none")}</td>
+            <td><button class="btn-ghost-danger dash-mute-undo" data-pk="${m.pool_key}" data-rule="${m.rule || ''}">${t("cancel")}</button></td>
           </tr>
         `).join("")}
         </tbody></table>`;
 
   // 最近 10 条告警(全局,供快速浏览)
   const recentHtml = recent.length === 0
-    ? `<div class="empty" style="padding:16px;color:var(--success)">✅ 暂无最近告警</div>`
+    ? `<div class="empty" style="padding:16px;color:var(--success)">${t("dash_no_recent")}</div>`
     : `<table class="data-table">
         <thead><tr>
-          <th style="width:100px">时间</th>
-          <th style="width:64px">级别</th>
-          <th style="width:220px">池子</th>
-          <th>消息</th>
+          <th style="width:100px">${t("col_time")}</th>
+          <th style="width:64px">${t("col_level")}</th>
+          <th style="width:220px">${t("col_pool")}</th>
+          <th>${t("col_message")}</th>
         </tr></thead>
         <tbody>
         ${recent.map(a => `
@@ -1871,15 +2401,15 @@ async function renderDashboard(box) {
 
   box.innerHTML = `
     ${stats}
-    <div class="section-title">🔥 告警最多的池子 <span class="count">近 1h · 未屏蔽</span></div>
+    <div class="section-title">${t("dash_section_hottest")} <span class="count">${t("dash_sub_hot_1h")}</span></div>
     ${hottestHtml}
-    <div class="section-title">📈 利用率 TOP · 可能接近爆仓阈值</div>
+    <div class="section-title">${t("dash_section_util")}</div>
     ${utilHtml}
-    <div class="section-title">💧 流动性紧张 TOP · 可用流动性 / TVL 最小</div>
+    <div class="section-title">${t("dash_section_tight")}</div>
     ${tightHtml}
-    <div class="section-title">🔕 当前屏蔽规则 <span class="count">${mutes.length}</span></div>
+    <div class="section-title">${t("dash_section_mutes")} <span class="count">${mutes.length}</span></div>
     ${mutesHtml}
-    <div class="section-title">📢 最近告警 <span class="count">全部</span></div>
+    <div class="section-title">${t("dash_section_recent")} <span class="count">${t("dash_sub_all")}</span></div>
     ${recentHtml}
   `;
 
@@ -1889,16 +2419,16 @@ async function renderDashboard(box) {
       ev.stopPropagation();
       const pk = b.dataset.pk;
       const rule = b.dataset.rule || null;
-      if (!confirm(rule ? `取消屏蔽规则 ${rule} ?` : `取消整池 ${pk} 的屏蔽?`)) return;
+      if (!confirm(rule ? t("mute_undo_confirm_rule", rule) : t("mute_undo_confirm_pool_whole", pk))) return;
       b.disabled = true;
-      b.textContent = "处理中…";
+      b.textContent = t("mute_processing");
       const resp = await apiRemoveMute(pk, rule);
       if (resp.ok) {
         await refreshAlertSummary();
       } else {
-        alert("取消失败: " + (resp.error || ""));
+        alert(t("cancel_failed", resp.error || ""));
         b.disabled = false;
-        b.textContent = "取消";
+        b.textContent = t("cancel");
       }
     };
   });
@@ -1910,44 +2440,44 @@ async function renderDashboard(box) {
 async function renderOverview(box, pk) {
   const r = await api(`/api/pools/${encodeURIComponent(pk)}/overview`);
   if (!r.ok) {
-    box.innerHTML = `<div class="error">数据加载失败: ${r.error}</div>`;
+    box.innerHTML = `<div class="error">${t("ov_load_failed", r.error)}</div>`;
     return;
   }
   const p = r.pool;
   box.innerHTML = `
     <div class="kpi-grid">
-      <div class="kpi-card"><div class="kpi-label">总存款 (Supply USD)</div><div class="kpi-value">${fmtUSD(p.supply_usd)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">总借款 (Borrow USD)</div><div class="kpi-value">${fmtUSD(p.borrow_usd)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">利用率</div><div class="kpi-value">${fmtPct(p.utilization_pct)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">可用流动性</div><div class="kpi-value">${fmtUSD(p.available_liquidity_usd)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">${t("ov_supply_usd")}</div><div class="kpi-value">${fmtUSD(p.supply_usd)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">${t("ov_borrow_usd")}</div><div class="kpi-value">${fmtUSD(p.borrow_usd)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">${t("ov_util")}</div><div class="kpi-value">${fmtPct(p.utilization_pct)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">${t("ov_avail_liq")}</div><div class="kpi-value">${fmtUSD(p.available_liquidity_usd)}</div></div>
     </div>
     <div class="info-grid">
-      <div class="info-item"><span class="k">当前价格</span><span class="v">$${fmtNum(p.price_usd, 6)}</span></div>
-      <div class="info-item"><span class="k">区块高度</span><span class="v">${p.block_number?.toLocaleString?.() || p.block_number}</span></div>
-      <div class="info-item"><span class="k">最近更新</span><span class="v" title="${fmtAbsTime(p.ts)}">${fmtRelTime(p.ts)}</span></div>
-      <div class="info-item"><span class="k">协议 / 链</span><span class="v">${p.protocol_zh || _protocolZh(p.protocol)} · ${p.chain_zh || _chainZh(p.chain)}</span></div>
+      <div class="info-item"><span class="k">${t("ov_price")}</span><span class="v">$${fmtNum(p.price_usd, 6)}</span></div>
+      <div class="info-item"><span class="k">${t("ov_block")}</span><span class="v">${p.block_number?.toLocaleString?.() || p.block_number}</span></div>
+      <div class="info-item"><span class="k">${t("ov_last_update")}</span><span class="v" title="${fmtAbsTime(p.ts)}">${fmtRelTime(p.ts)}</span></div>
+      <div class="info-item"><span class="k">${t("ov_proto_chain")}</span><span class="v">${state.lang === "en" ? p.protocol : (p.protocol_zh || _protocolZh(p.protocol))} · ${state.lang === "en" ? p.chain : (p.chain_zh || _chainZh(p.chain))}</span></div>
       <div class="info-item" style="grid-column: 1 / -1">
-        <span class="k">资产合约</span>
+        <span class="k">${t("ov_asset_contract")}</span>
         <span class="v">
           <a href="${explorerAddrUrl(p.chain, p.asset)}" target="_blank">${p.asset}</a>
-          <button class="copy-btn" onclick="copyToClip('${p.asset}', this)">复制</button>
+          <button class="copy-btn" onclick="copyToClip('${p.asset}', this)">${t("ov_copy")}</button>
         </span>
       </div>
     </div>
     <div id="mute-panel-container"></div>
     <div style="margin-top:12px;padding:12px 16px;background:#1a0b0b;border:1px solid #450a0a;border-radius:6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <span style="color:#fca5a5;font-size:12px">🗑 从面板删除这个池子(停止采集 + 停止告警,可恢复)</span>
-      <button id="delete-pool-btn" class="btn-ghost-danger" style="margin-left:auto;padding:6px 14px;font-size:12px">删除 ${p.symbol}</button>
+      <span style="color:#fca5a5;font-size:12px">${t("ov_delete_hint")}</span>
+      <button id="delete-pool-btn" class="btn-ghost-danger" style="margin-left:auto;padding:6px 14px;font-size:12px">${t("ov_delete_btn", p.symbol)}</button>
     </div>
   `;
   renderMutePanel("mute-panel-container", pk);
   const delBtn = document.getElementById("delete-pool-btn");
   if (delBtn) {
     delBtn.onclick = async () => {
-      if (!confirm(`确认从面板删除 ${p.symbol}(${pk})?\n\n• 监控进程会停止采集这个池子(无新快照)\n• 不再产生告警,不推 Lark\n• 侧栏将隐藏,但历史数据保留,可在侧栏底部"已删除池子"里恢复`)) return;
-      const reason = prompt("删除原因?(可留空)", "") || "UI 删除";
+      if (!confirm(t("ov_delete_confirm", p.symbol, pk))) return;
+      const reason = prompt(t("ov_delete_reason_prompt"), "") || t("ov_delete_reason_default");
       delBtn.disabled = true;
-      delBtn.textContent = "删除中…";
+      delBtn.textContent = t("ov_deleting");
       const resp = await apiDeletePool(pk, reason);
       if (resp.ok) {
         await loadPools();
@@ -1964,9 +2494,9 @@ async function renderOverview(box, pk) {
         renderTree(document.getElementById("tree-search").value);
         renderTab();
       } else {
-        alert("删除失败: " + (resp.error || ""));
+        alert(t("ov_delete_failed", resp.error || ""));
         delBtn.disabled = false;
-        delBtn.textContent = `删除 ${p.symbol}`;
+        delBtn.textContent = t("ov_delete_btn", p.symbol);
       }
     };
   }
@@ -2006,7 +2536,7 @@ async function apiRemoveMute(pool_key, rule) {
 async function renderMutePanel(containerId, pool_key) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  el.innerHTML = `<div style="color:#64748b;font-size:12px">加载屏蔽状态…</div>`;
+  el.innerHTML = `<div style="color:#64748b;font-size:12px">${t("mute_loading")}</div>`;
 
   const r = await apiListMutes();
   const list = (r.ok && r.mutes) || [];
@@ -2014,11 +2544,11 @@ async function renderMutePanel(containerId, pool_key) {
   const ruleMutes = list.filter(m => m.pool_key === pool_key && m.rule);
 
   const durations = [
-    {v: "30m", lbl: "30分钟"},
-    {v: "2h",  lbl: "2小时"},
-    {v: "24h", lbl: "24小时"},
-    {v: "7d",  lbl: "7天"},
-    {v: "",    lbl: "永久"},
+    {v: "30m", lbl: t("mute_dur_30m")},
+    {v: "2h",  lbl: t("mute_dur_2h")},
+    {v: "24h", lbl: t("mute_dur_24h")},
+    {v: "7d",  lbl: t("mute_dur_7d")},
+    {v: "",    lbl: t("mute_dur_forever")},
   ];
   const durBtns = durations.map(d =>
     `<button class="mute-do" data-d="${d.v}" style="padding:4px 10px;margin:0 4px 0 0;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;cursor:pointer;font-size:12px">${d.lbl}</button>`
@@ -2026,35 +2556,35 @@ async function renderMutePanel(containerId, pool_key) {
 
   let html = `
     <div style="margin-top:20px;padding:16px;background:#0f172a;border:1px solid #1e293b;border-radius:6px">
-      <div style="font-size:13px;font-weight:bold;margin-bottom:12px;color:#e2e8f0">🔕 告警屏蔽</div>
+      <div style="font-size:13px;font-weight:bold;margin-bottom:12px;color:#e2e8f0">${t("mute_title")}</div>
   `;
 
   if (poolMute) {
     html += `
       <div style="padding:10px 12px;background:#422006;border:1px solid #713f12;border-radius:4px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span style="color:#facc15;font-size:13px">🔕 整个池子已屏蔽</span>
-        <span style="color:#94a3b8;font-size:12px">到期: ${poolMute.human_until || "永久"}</span>
-        <span style="color:#94a3b8;font-size:12px">原因: ${poolMute.reason || "(无)"}</span>
-        <button class="mute-undo btn-ghost-danger" data-rule="" style="padding:4px 12px;font-size:12px">取消屏蔽</button>
+        <span style="color:#facc15;font-size:13px">${t("mute_whole_muted")}</span>
+        <span style="color:#94a3b8;font-size:12px">${t("mute_until_label", poolMute.human_until || t("forever"))}</span>
+        <span style="color:#94a3b8;font-size:12px">${t("mute_reason_label", poolMute.reason || t("none"))}</span>
+        <button class="mute-undo btn-ghost-danger" data-rule="" style="padding:4px 12px;font-size:12px">${t("mute_undo")}</button>
       </div>`;
   } else {
     html += `
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="color:#94a3b8;font-size:12px">屏蔽此池子所有告警:</span>
+        <span style="color:#94a3b8;font-size:12px">${t("mute_apply_prompt")}</span>
         ${durBtns}
       </div>`;
   }
 
   if (ruleMutes.length > 0) {
     html += `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #1e293b">
-      <div style="color:#94a3b8;font-size:12px;margin-bottom:8px">规则级屏蔽:</div>`;
+      <div style="color:#94a3b8;font-size:12px;margin-bottom:8px">${t("mute_rule_level_title")}</div>`;
     for (const m of ruleMutes) {
       html += `
         <div style="padding:6px 10px;background:#0f172a;border:1px solid #1e293b;border-radius:4px;margin-bottom:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px">
           <code style="color:#fb923c">${m.rule}</code>
-          <span style="color:#94a3b8">到期 ${m.human_until || "永久"}</span>
+          <span style="color:#94a3b8">${t("mute_until_label", m.human_until || t("forever"))}</span>
           <span style="color:#64748b">${m.reason || ""}</span>
-          <button class="mute-undo btn-ghost-danger" data-rule="${m.rule}" style="margin-left:auto">取消</button>
+          <button class="mute-undo btn-ghost-danger" data-rule="${m.rule}" style="margin-left:auto">${t("cancel")}</button>
         </div>`;
     }
     html += `</div>`;
@@ -2066,15 +2596,15 @@ async function renderMutePanel(containerId, pool_key) {
   el.querySelectorAll(".mute-do").forEach(btn => {
     btn.onclick = async () => {
       const duration = btn.dataset.d;  // "" = forever
-      const reason = prompt("屏蔽原因?(可留空)", "") || "";
+      const reason = prompt(t("mute_reason_prompt"), "") || "";
       btn.disabled = true;
       const origText = btn.textContent;
-      btn.textContent = "处理中…";
+      btn.textContent = t("mute_processing");
       const resp = await apiAddMute(pool_key, null, duration, reason);
       if (resp.ok) {
         await renderMutePanel(containerId, pool_key);
       } else {
-        alert("屏蔽失败: " + (resp.error || resp.detail || "未知错误"));
+        alert(t("mute_apply_failed", resp.error || resp.detail || ""));
         btn.disabled = false;
         btn.textContent = origText;
       }
@@ -2083,16 +2613,16 @@ async function renderMutePanel(containerId, pool_key) {
   el.querySelectorAll(".mute-undo").forEach(btn => {
     btn.onclick = async () => {
       const rule = btn.dataset.rule || null;
-      if (!confirm(rule ? `取消屏蔽规则 ${rule} ?` : "取消屏蔽整个池子?")) return;
+      if (!confirm(rule ? t("mute_undo_confirm_rule", rule) : t("mute_undo_confirm_whole"))) return;
       btn.disabled = true;
-      btn.textContent = "处理中…";
+      btn.textContent = t("mute_processing");
       const resp = await apiRemoveMute(pool_key, rule);
       if (resp.ok) {
         await renderMutePanel(containerId, pool_key);
       } else {
-        alert("取消失败: " + (resp.error || resp.detail || "未知错误"));
+        alert(t("cancel_failed", resp.error || resp.detail || ""));
         btn.disabled = false;
-        btn.textContent = "取消";
+        btn.textContent = t("cancel");
       }
     };
   });
@@ -2135,12 +2665,12 @@ async function renderHiddenPoolsPanel() {
   }
   el.innerHTML = `
     <details style="font-size:12px">
-      <summary style="color:#94a3b8;cursor:pointer;padding:4px 8px">🗑 已删除池子 (${list.length})</summary>
+      <summary style="color:#94a3b8;cursor:pointer;padding:4px 8px">${t("hidden_pools_title", list.length)}</summary>
       <div style="margin-top:6px">
         ${list.map(h => `
           <div style="padding:4px 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span class="mono" style="color:#64748b;font-size:11px">${h.pool_key}</span>
-            <button class="restore-btn" data-pk="${h.pool_key}" style="margin-left:auto;padding:1px 6px;background:#065f46;color:#d1fae5;border:1px solid #10b981;border-radius:3px;cursor:pointer;font-size:11px">恢复</button>
+            <button class="restore-btn" data-pk="${h.pool_key}" style="margin-left:auto;padding:1px 6px;background:#065f46;color:#d1fae5;border:1px solid #10b981;border-radius:3px;cursor:pointer;font-size:11px">${t("hidden_pool_restore")}</button>
           </div>
         `).join("")}
       </div>
@@ -2150,16 +2680,16 @@ async function renderHiddenPoolsPanel() {
     btn.onclick = async () => {
       const pk = btn.dataset.pk;
       btn.disabled = true;
-      btn.textContent = "恢复中…";
+      btn.textContent = t("hidden_pool_restoring");
       const resp = await apiRestorePool(pk);
       if (resp.ok) {
         await loadPools();
         await renderHiddenPoolsPanel();
         renderTree(document.getElementById("tree-search").value);
       } else {
-        alert("恢复失败: " + (resp.error || ""));
+        alert(t("hidden_pool_restore_failed", resp.error || ""));
         btn.disabled = false;
-        btn.textContent = "恢复";
+        btn.textContent = t("hidden_pool_restore");
       }
     };
   });
@@ -2168,7 +2698,7 @@ async function renderHiddenPoolsPanel() {
 window.copyToClip = function(txt, btn) {
   navigator.clipboard?.writeText(txt).then(() => {
     const old = btn.textContent;
-    btn.textContent = "已复制";
+    btn.textContent = t("ov_copied");
     setTimeout(() => btn.textContent = old, 1200);
   }).catch(() => {});
 };
@@ -3006,6 +3536,12 @@ function stopFallbackPolling() {
    Boot
    ========================================================= */
 async function boot() {
+  // 先把静态 i18n 打上,避免页面短暂空白
+  applyStaticI18n();
+  // 语言切换按钮
+  const lsBtn = document.getElementById("lang-switch");
+  if (lsBtn) lsBtn.onclick = () => setLang(state.lang === "zh" ? "en" : "zh");
+
   const r = parseHash();
   if (r) {
     state.currentPoolKey = r.poolKey;
