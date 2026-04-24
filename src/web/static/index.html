@@ -768,6 +768,11 @@
       <span id="tree-overview-label"></span>
       <span class="oe-badge" id="tree-overview-badge" style="display:none">0</span>
     </div>
+    <div class="tree-overview-entry" id="tree-watchlist-entry" style="margin-top:var(--space-1)">
+      <span class="oe-icon">👥</span>
+      <span id="tree-watchlist-label"></span>
+      <span class="oe-badge" id="tree-watchlist-badge" style="display:none;background:var(--info)">0</span>
+    </div>
     <div class="tree-search">
       <input type="text" id="tree-search">
     </div>
@@ -1027,8 +1032,39 @@ const I18N = {
     cmdk_btn_title: "全局搜索 (Cmd/Ctrl+K)",
 
     /* sidebar */
+    loading: "加载中…",
     tree_overview: "总览",
     tree_overview_title: "全局总览 (默认首页)",
+    tree_watchlist: "地址监控",
+    tree_watchlist_title: "自定义关注地址 + 标签",
+    /* Watchlist page */
+    wl_title: "地址监控 / 关注列表",
+    wl_intro: "给链上地址打标签,在活动页/持仓页以标签名展示;支持按 watch_mode 产生专属告警。",
+    wl_add_title: "➕ 添加关注地址",
+    wl_field_addr: "地址",
+    wl_field_label: "标签名",
+    wl_field_tags: "标签(逗号分隔)",
+    wl_tags_placeholder: "cex, binance",
+    wl_field_mode: "监控模式",
+    wl_field_threshold: "告警阈值",
+    wl_field_note: "备注",
+    wl_note_placeholder: "来源/备注信息(可选)",
+    wl_mode_tag_only: "仅标签(不告警)",
+    wl_mode_alert_any: "任何活动都告警 (warning)",
+    wl_mode_alert_threshold: "超阈值告警 (alert)",
+    wl_add_btn: "添加",
+    wl_added: "已添加",
+    wl_missing_required: "地址和标签名必填",
+    wl_empty: "尚未添加关注地址。上方表单录入后,活动/持仓/告警会自动显示标签。",
+    wl_col_label: "标签",
+    wl_col_addr: "地址",
+    wl_col_tags: "分类",
+    wl_col_mode: "模式",
+    wl_col_threshold: "阈值",
+    wl_col_note: "备注",
+    wl_col_action: "操作",
+    wl_delete: "删除",
+    wl_confirm_delete: "确定要删除地址 {0} 吗?",
     tree_search_placeholder: "搜索池子 (Cmd/Ctrl+K 全局)…",
     tree_loading: "加载池子…",
     tree_empty: "暂无池子数据",
@@ -1247,8 +1283,39 @@ const I18N = {
     st_ws_tip: "Live connections",
     cmdk_btn_title: "Global search (Cmd/Ctrl+K)",
 
+    loading: "Loading…",
     tree_overview: "Dashboard",
     tree_overview_title: "Global dashboard (home)",
+    tree_watchlist: "Watchlist",
+    tree_watchlist_title: "Custom watched addresses + labels",
+    /* Watchlist page */
+    wl_title: "Address Watchlist",
+    wl_intro: "Label on-chain addresses; activity/holders pages show labels instead of raw hex. Optionally fire dedicated alerts by watch_mode.",
+    wl_add_title: "➕ Add watched address",
+    wl_field_addr: "Address",
+    wl_field_label: "Label",
+    wl_field_tags: "Tags (comma-separated)",
+    wl_tags_placeholder: "cex, binance",
+    wl_field_mode: "Watch mode",
+    wl_field_threshold: "Alert threshold",
+    wl_field_note: "Note",
+    wl_note_placeholder: "Source / comment (optional)",
+    wl_mode_tag_only: "Tag only (no alert)",
+    wl_mode_alert_any: "Alert on any activity (warning)",
+    wl_mode_alert_threshold: "Alert above threshold (alert)",
+    wl_add_btn: "Add",
+    wl_added: "Added",
+    wl_missing_required: "Address and label are required",
+    wl_empty: "No watched addresses yet. Once added, labels show up on activity/holders/alerts automatically.",
+    wl_col_label: "Label",
+    wl_col_addr: "Address",
+    wl_col_tags: "Tags",
+    wl_col_mode: "Mode",
+    wl_col_threshold: "Threshold",
+    wl_col_note: "Note",
+    wl_col_action: "Action",
+    wl_delete: "Delete",
+    wl_confirm_delete: "Delete watched address {0}?",
     tree_search_placeholder: "Search pools (Cmd/Ctrl+K global)…",
     tree_loading: "Loading pools…",
     tree_empty: "No pools",
@@ -1738,6 +1805,10 @@ function applyStaticI18n() {
   if (overviewLabel) overviewLabel.textContent = t("tree_overview");
   const overviewEntry = document.getElementById("tree-overview-entry");
   if (overviewEntry) overviewEntry.title = t("tree_overview_title");
+  const wlLabel = document.getElementById("tree-watchlist-label");
+  if (wlLabel) wlLabel.textContent = t("tree_watchlist");
+  const wlEntry = document.getElementById("tree-watchlist-entry");
+  if (wlEntry) wlEntry.title = t("tree_watchlist_title");
   const treeSearch = document.getElementById("tree-search");
   if (treeSearch) treeSearch.placeholder = t("tree_search_placeholder");
   // tree-root 的 loading 占位只有首次会在,别强行覆盖有数据时
@@ -1980,11 +2051,14 @@ function renderBreadcrumb() {
 }
 
 function parseHash() {
-  // #/pool/ethereum:aave_v3:USDC/activity  or  #/dashboard
+  // #/pool/ethereum:aave_v3:USDC/activity  or  #/dashboard  or  #/watchlist
   const h = location.hash.slice(1);
   const parts = h.split("/").filter(Boolean);
   if (parts[0] === "dashboard") {
     return { poolKey: null, tab: "__dashboard__" };
+  }
+  if (parts[0] === "watchlist") {
+    return { poolKey: null, tab: "__watchlist__" };
   }
   if (parts[0] === "pool" && parts[1]) {
     return { poolKey: decodeURIComponent(parts[1]), tab: parts[2] || "alerts" };
@@ -2004,6 +2078,15 @@ function goDashboard() {
   state.currentTab = "__dashboard__";
   state.currentPoolKey = null;
   setHash(null, "__dashboard__");
+  syncTabUi();
+  renderBreadcrumb();
+  renderTree(document.getElementById("tree-search").value);
+  renderTab();
+}
+function goWatchlist() {
+  state.currentTab = "__watchlist__";
+  state.currentPoolKey = null;
+  if (location.hash !== "#/watchlist") location.hash = "#/watchlist";
   syncTabUi();
   renderBreadcrumb();
   renderTree(document.getElementById("tree-search").value);
@@ -2096,6 +2179,13 @@ function _skeletonFor(tab) {
 async function renderTab() {
   destroyChart();
   const box = document.getElementById("tab-content");
+  if (state.currentTab === "__watchlist__") {
+    box.innerHTML = `<div class="loading">${t("loading") || "加载中…"}</div>`;
+    try { await renderWatchlist(box); }
+    catch (e) { console.error(e); box.innerHTML = `<div class="error">${e.message}</div>`; }
+    _syncOverviewEntryActive();
+    return;
+  }
   if (state.currentTab === "__dashboard__" || (!state.currentPoolKey && state.currentTab !== "alerts")) {
     // 无选中池子时默认进总览
     state.currentTab = "__dashboard__";
@@ -2127,8 +2217,9 @@ async function renderTab() {
 
 function _syncOverviewEntryActive() {
   const el = document.getElementById("tree-overview-entry");
-  if (!el) return;
-  el.classList.toggle("active", state.currentTab === "__dashboard__");
+  if (el) el.classList.toggle("active", state.currentTab === "__dashboard__");
+  const wl = document.getElementById("tree-watchlist-entry");
+  if (wl) wl.classList.toggle("active", state.currentTab === "__watchlist__");
 }
 
 /* =========================================================
@@ -2475,6 +2566,164 @@ async function renderDashboard(box) {
       }
     };
   });
+}
+
+/* =========================================================
+   Watchlist page (地址监控)
+   独立页面,从侧栏顶部 👥 按钮进入。CRUD 关注地址 + 标签 + 告警配置。
+   ========================================================= */
+async function renderWatchlist(box) {
+  const isEn = state.lang === "en";
+  box.innerHTML = `
+    <h2 style="margin:0 0 var(--space-3) 0;font-size:var(--fs-xl);color:var(--text-0)">👥 ${t("wl_title")}</h2>
+    <div style="color:var(--text-2);font-size:var(--fs-sm);margin-bottom:var(--space-4)">${t("wl_intro")}</div>
+
+    <div style="padding:var(--space-4);background:var(--bg-1);border:1px solid var(--bg-2);border-radius:var(--radius-3);margin-bottom:var(--space-4)">
+      <div style="font-weight:600;color:var(--text-0);margin-bottom:var(--space-3)">${t("wl_add_title")}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);align-items:end">
+        <div>
+          <label style="display:block;font-size:var(--fs-xs);color:var(--text-2);margin-bottom:4px">${t("wl_field_addr")} *</label>
+          <input type="text" id="wl-addr" placeholder="0xABCD...1234" style="width:100%;padding:6px 10px;background:var(--bg-0);border:1px solid var(--bg-3);border-radius:var(--radius-2);color:var(--text-0);font-family:var(--mono, monospace);font-size:var(--fs-sm)">
+        </div>
+        <div>
+          <label style="display:block;font-size:var(--fs-xs);color:var(--text-2);margin-bottom:4px">${t("wl_field_label")} *</label>
+          <input type="text" id="wl-label" placeholder="e.g. Binance Hot #3" style="width:100%;padding:6px 10px;background:var(--bg-0);border:1px solid var(--bg-3);border-radius:var(--radius-2);color:var(--text-0);font-size:var(--fs-sm)">
+        </div>
+        <div>
+          <label style="display:block;font-size:var(--fs-xs);color:var(--text-2);margin-bottom:4px">${t("wl_field_tags")}</label>
+          <input type="text" id="wl-tags" placeholder="${t("wl_tags_placeholder")}" style="width:100%;padding:6px 10px;background:var(--bg-0);border:1px solid var(--bg-3);border-radius:var(--radius-2);color:var(--text-0);font-size:var(--fs-sm)">
+        </div>
+        <div>
+          <label style="display:block;font-size:var(--fs-xs);color:var(--text-2);margin-bottom:4px">${t("wl_field_mode")}</label>
+          <select id="wl-mode" style="width:100%;padding:6px 10px;background:var(--bg-0);border:1px solid var(--bg-3);border-radius:var(--radius-2);color:var(--text-0);font-size:var(--fs-sm)">
+            <option value="tag_only">${t("wl_mode_tag_only")}</option>
+            <option value="alert_any">${t("wl_mode_alert_any")}</option>
+            <option value="alert_threshold">${t("wl_mode_alert_threshold")}</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:var(--fs-xs);color:var(--text-2);margin-bottom:4px">${t("wl_field_threshold")} (USD)</label>
+          <input type="number" id="wl-threshold" min="0" step="10000" placeholder="e.g. 100000" style="width:100%;padding:6px 10px;background:var(--bg-0);border:1px solid var(--bg-3);border-radius:var(--radius-2);color:var(--text-0);font-size:var(--fs-sm)">
+        </div>
+        <div>
+          <label style="display:block;font-size:var(--fs-xs);color:var(--text-2);margin-bottom:4px">${t("wl_field_note")}</label>
+          <input type="text" id="wl-note" placeholder="${t("wl_note_placeholder")}" style="width:100%;padding:6px 10px;background:var(--bg-0);border:1px solid var(--bg-3);border-radius:var(--radius-2);color:var(--text-0);font-size:var(--fs-sm)">
+        </div>
+      </div>
+      <div style="margin-top:var(--space-3);display:flex;gap:var(--space-2);align-items:center">
+        <button id="wl-add-btn" style="padding:6px 14px;background:var(--info);color:#fff;border:none;border-radius:var(--radius-2);cursor:pointer;font-weight:600;font-size:var(--fs-sm)">➕ ${t("wl_add_btn")}</button>
+        <span id="wl-add-msg" style="font-size:var(--fs-xs);color:var(--text-2)"></span>
+      </div>
+    </div>
+
+    <div id="wl-list"><div class="loading">${t("loading")}</div></div>
+  `;
+
+  const refreshList = async () => {
+    const r = await api("/api/watchlist");
+    const el = document.getElementById("wl-list");
+    if (!r.ok) {
+      el.innerHTML = `<div class="notice-warning">${r.error || ""}</div>`;
+      return;
+    }
+    const rows = r.addresses || [];
+    if (rows.length === 0) {
+      el.innerHTML = `<div class="empty">${t("wl_empty")}</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <table class="data-table">
+        <thead><tr>
+          <th style="width:180px">${t("wl_col_label")}</th>
+          <th>${t("wl_col_addr")}</th>
+          <th>${t("wl_col_tags")}</th>
+          <th>${t("wl_col_mode")}</th>
+          <th class="num">${t("wl_col_threshold")}</th>
+          <th>${t("wl_col_note")}</th>
+          <th style="width:80px">${t("wl_col_action")}</th>
+        </tr></thead>
+        <tbody>
+        ${rows.map(e => {
+          const modeColor = e.watch_mode === "alert_threshold" ? "var(--warn)"
+            : e.watch_mode === "alert_any" ? "var(--danger)" : "var(--text-3)";
+          return `<tr>
+            <td style="color:var(--info);font-weight:600">👥 ${e.label}</td>
+            <td class="mono" style="font-size:var(--fs-xs)">${e.address}</td>
+            <td>${(e.tags || []).map(tg => `<span style="display:inline-block;padding:1px 6px;margin-right:4px;background:var(--bg-2);color:var(--text-1);border-radius:3px;font-size:var(--fs-xs)">${tg}</span>`).join("")}</td>
+            <td style="color:${modeColor}">${t("wl_mode_" + e.watch_mode)}</td>
+            <td class="num">${e.threshold_usd > 0 ? fmtUSD(e.threshold_usd) : "—"}</td>
+            <td style="color:var(--text-2);font-size:var(--fs-xs);max-width:200px;overflow:hidden;text-overflow:ellipsis">${e.note || ""}</td>
+            <td><button class="wl-del" data-addr="${e.address}" style="padding:3px 8px;background:transparent;color:var(--danger);border:1px solid var(--danger);border-radius:var(--radius-1);cursor:pointer;font-size:var(--fs-xs)">${t("wl_delete")}</button></td>
+          </tr>`;
+        }).join("")}
+        </tbody>
+      </table>
+    `;
+    el.querySelectorAll(".wl-del").forEach(btn => {
+      btn.onclick = async () => {
+        const addr = btn.dataset.addr;
+        if (!confirm(t("wl_confirm_delete", addr))) return;
+        btn.disabled = true;
+        const resp = await fetch(`/api/watchlist/${encodeURIComponent(addr)}`, { method: "DELETE" });
+        const j = await resp.json().catch(() => ({}));
+        if (j.ok) { await refreshList(); await _refreshWlBadge(); }
+        else { alert(j.error || "delete failed"); btn.disabled = false; }
+      };
+    });
+  };
+
+  document.getElementById("wl-add-btn").onclick = async () => {
+    const addr = document.getElementById("wl-addr").value.trim();
+    const label = document.getElementById("wl-label").value.trim();
+    const tagsStr = document.getElementById("wl-tags").value.trim();
+    const mode = document.getElementById("wl-mode").value;
+    const threshold = parseFloat(document.getElementById("wl-threshold").value) || 0;
+    const note = document.getElementById("wl-note").value.trim();
+    const msgEl = document.getElementById("wl-add-msg");
+    msgEl.textContent = "";
+    if (!addr || !label) { msgEl.textContent = t("wl_missing_required"); msgEl.style.color = "var(--danger)"; return; }
+    const resp = await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        address: addr, label, tags: tagsStr ? tagsStr.split(",").map(s => s.trim()).filter(Boolean) : [],
+        note, watch_mode: mode, threshold_usd: threshold,
+      }),
+    });
+    const j = await resp.json().catch(() => ({ ok: false, error: "network" }));
+    if (j.ok) {
+      document.getElementById("wl-addr").value = "";
+      document.getElementById("wl-label").value = "";
+      document.getElementById("wl-tags").value = "";
+      document.getElementById("wl-threshold").value = "";
+      document.getElementById("wl-note").value = "";
+      msgEl.textContent = "✅ " + t("wl_added");
+      msgEl.style.color = "var(--success)";
+      await refreshList();
+      await _refreshWlBadge();
+    } else {
+      msgEl.textContent = j.error || "add failed";
+      msgEl.style.color = "var(--danger)";
+    }
+  };
+
+  await refreshList();
+  await _refreshWlBadge();
+}
+
+async function _refreshWlBadge() {
+  try {
+    const r = await api("/api/watchlist");
+    const badge = document.getElementById("tree-watchlist-badge");
+    if (!badge) return;
+    const n = (r.ok && r.addresses) ? r.addresses.length : 0;
+    if (n > 0) {
+      badge.textContent = String(n);
+      badge.style.display = "";
+    } else {
+      badge.style.display = "none";
+    }
+  } catch (_) {}
 }
 
 /* =========================================================
@@ -2942,11 +3191,21 @@ async function renderActivity(box, pk) {
     }, 600);
   });
 
-  const r = await api(`/api/pools/${encodeURIComponent(pk)}/activity?hours=${hours}&min_usd=${minUsd}`);
+  const [r, wlResp] = await Promise.all([
+    api(`/api/pools/${encodeURIComponent(pk)}/activity?hours=${hours}&min_usd=${minUsd}`),
+    api(`/api/watchlist`),
+  ]);
   const body = document.getElementById("act-body");
   if (!r.ok) {
     body.innerHTML = `<div class="notice-warning">数据不可用: ${r.error}</div>`;
     return;
+  }
+  // 地址 → {label, tags[]} 映射,给每行活动反查
+  const watchMap = new Map();
+  if (wlResp && wlResp.ok) {
+    for (const e of (wlResp.addresses || [])) {
+      watchMap.set(String(e.address).toLowerCase(), e);
+    }
   }
   const events = r.events || [];
   if (r.cached_at) {
@@ -2998,7 +3257,13 @@ async function renderActivity(box, pk) {
         return `<tr class="${rowClass}">
           <td title="${fmtAbsTime(e.ts)}">${fmtRelTime(e.ts)}</td>
           <td>${icon} ${(state.lang === "en" ? e.event_en : e.event_zh) || e.event}</td>
-          <td><a class="addr" href="${explorerAddrUrl(chain, e.user)}" target="_blank" title="${e.user}">${fmtAddr(e.user)}</a></td>
+          <td>${(() => {
+            const wl = watchMap.get(String(e.user || "").toLowerCase());
+            if (wl) {
+              return `<a class="addr" href="${explorerAddrUrl(chain, e.user)}" target="_blank" title="${e.user}${wl.tags && wl.tags.length ? ' · ' + wl.tags.join(', ') : ''}${wl.note ? ' · ' + wl.note : ''}" style="color:var(--info);font-weight:600">👥 ${wl.label}</a>`;
+            }
+            return `<a class="addr" href="${explorerAddrUrl(chain, e.user)}" target="_blank" title="${e.user}">${fmtAddr(e.user)}</a>`;
+          })()}</td>
           <td class="num">${fmtUSD(e.amount_usd)}</td>
           <td class="num">${tokenCell}</td>
           <td class="num">${e.block?.toLocaleString?.() ?? e.block}</td>
@@ -3056,7 +3321,10 @@ async function renderHolders(box, pk) {
   });
 
   const qs = `?hours=${hours}&method=${encodeURIComponent(method)}`;
-  const r = await api(`/api/pools/${encodeURIComponent(pk)}/holders${qs}`);
+  const [r, wlResp] = await Promise.all([
+    api(`/api/pools/${encodeURIComponent(pk)}/holders${qs}`),
+    api(`/api/watchlist`),
+  ]);
   const body = document.getElementById("holders-body");
   const desc = document.getElementById("holders-desc");
   const rangeEl = document.getElementById("holders-range");
@@ -3067,11 +3335,29 @@ async function renderHolders(box, pk) {
     return;
   }
 
+  // 地址 → {label, tags} 映射,给每行持仓反查
+  const watchMap = new Map();
+  if (wlResp && wlResp.ok) {
+    for (const e of (wlResp.addresses || [])) {
+      watchMap.set(String(e.address).toLowerCase(), e);
+    }
+  }
+  // 渲染单元格时:如果命中 watchlist,用标签替代地址缩写
+  const _renderAddr = (addr, fallback_short) => {
+    const wl = watchMap.get(String(addr || "").toLowerCase());
+    const short = fallback_short || fmtAddr(addr);
+    if (wl) {
+      const tagHint = wl.tags && wl.tags.length ? ' · ' + wl.tags.join(', ') : '';
+      return `<a class="addr" href="${explorerAddrUrl(chain, addr)}" target="_blank" title="${addr}${tagHint}${wl.note ? ' · ' + wl.note : ''}" style="color:var(--info);font-weight:600">👥 ${wl.label}</a>`;
+    }
+    return `<a class="addr" href="${explorerAddrUrl(chain, addr)}" target="_blank" title="${addr}">${short}</a>`;
+  };
+
   const top = r.top || [];
   const usedMethod = r.method || "net_flow";
 
   if (usedMethod === "subgraph") {
-    desc.textContent = "按 aToken 持仓余额(含累积利息)静态排名 · 来源:The Graph subgraph";
+    desc.textContent = "按 aToken 持仓余额(含累积利息)静态排名 · 来源:The Graph subgraph · Top 10";
     rangeEl.style.display = "none";  // subgraph is a snapshot, hours irrelevant
     if (top.length === 0) {
       body.innerHTML = `<div class="empty">暂无持仓数据</div>`;
@@ -3089,7 +3375,7 @@ async function renderHolders(box, pk) {
         ${top.map(t => `
           <tr>
             <td>${t.rank}</td>
-            <td><a class="addr" href="${explorerAddrUrl(chain, t.address)}" target="_blank" title="${t.address}">${t.address_short || fmtAddr(t.address)}</a>${t.tag?`<span style="margin-left:6px;font-size:10px;color:#22d3ee">[${t.tag}]</span>`:""}</td>
+            <td>${_renderAddr(t.address, t.address_short)}${t.tag?`<span style="margin-left:6px;font-size:10px;color:#22d3ee">[${t.tag}]</span>`:""}</td>
             <td class="num">${(t.balance_token || 0).toLocaleString(undefined, {maximumFractionDigits: 4})}</td>
             <td class="num">${fmtUSD(t.balance_usd)}</td>
             <td class="num">${t.variable_debt_usd > 0 ? fmtUSD(t.variable_debt_usd) : "—"}</td>
@@ -3102,7 +3388,7 @@ async function renderHolders(box, pk) {
   }
 
   // default: net_flow
-  desc.textContent = `按最近 ${hours===168?"7 天":hours+" 小时"} Supply - Withdraw 净流入排名(正=净流入,负=净流出)`;
+  desc.textContent = `按最近 ${hours===168?"7 天":hours+" 小时"} Supply - Withdraw 净流入排名(正=净流入,负=净流出) · Top 10`;
   rangeEl.style.display = "";
   if (top.length === 0) {
     body.innerHTML = `<div class="empty">暂无数据 (${hours}h 窗口内无活动)</div>`;
@@ -3119,7 +3405,7 @@ async function renderHolders(box, pk) {
       ${top.map(t => `
         <tr>
           <td>${t.rank}</td>
-          <td><a class="addr" href="${explorerAddrUrl(chain, t.address)}" target="_blank" title="${t.address}">${t.address_short || fmtAddr(t.address)}</a>${t.tag?`<span style="margin-left:6px;font-size:10px;color:#22d3ee">[${t.tag}]</span>`:""}</td>
+          <td>${_renderAddr(t.address, t.address_short)}${t.tag?`<span style="margin-left:6px;font-size:10px;color:#22d3ee">[${t.tag}]</span>`:""}</td>
           <td class="num ${t.net_usd >= 0 ? 'net-positive' : 'net-negative'}">${t.net_usd>=0?"+":""}${fmtUSD(t.net_usd)}</td>
           <td class="num">${fmtUSD(t.supply_usd)}</td>
           <td class="num">${fmtUSD(t.withdraw_usd)}</td>
@@ -3622,8 +3908,13 @@ async function boot() {
   // 绑定 "总览" 入口点击
   const oe = document.getElementById("tree-overview-entry");
   if (oe) oe.onclick = () => goDashboard();
+  // 绑定 "地址监控" 入口点击
+  const wlEntry = document.getElementById("tree-watchlist-entry");
+  if (wlEntry) wlEntry.onclick = () => goWatchlist();
   // 侧栏告警徽章每 45s 刷新
   setInterval(() => { refreshAlertSummary().catch(() => {}); }, 45000);
+  // 地址监控徽章初始化
+  _refreshWlBadge();
   // dashboard 面板若用户在看,每 60s 重绘
   _startDashboardTimer();
   // 顶栏 🔍 按钮 + 全局 Cmd/Ctrl+K

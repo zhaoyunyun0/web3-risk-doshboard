@@ -431,7 +431,7 @@ async def fetch_top_holders_by_netflow(
             "tag": None,
         })
     rows.sort(key=lambda r: abs(r["net_usd"]), reverse=True)
-    top = rows[:20]
+    top = rows[:10]
     for i, r in enumerate(top, start=1):
         r["rank"] = i
     return top

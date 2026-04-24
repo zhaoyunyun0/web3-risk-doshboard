@@ -40,7 +40,7 @@ query TopAHolders($underlying: Bytes!) {
     where: { reserve_: { underlyingAsset: $underlying } }
     orderBy: scaledATokenBalance
     orderDirection: desc
-    first: 20
+    first: 10
   ) {
     user { id }
     scaledATokenBalance
@@ -137,6 +137,6 @@ async def fetch_top_holders_subgraph(
         })
 
     out.sort(key=lambda x: x["balance_usd"], reverse=True)
-    for i, row in enumerate(out[:20], start=1):
+    for i, row in enumerate(out[:10], start=1):
         row["rank"] = i
-    return out[:20]
+    return out[:10]
