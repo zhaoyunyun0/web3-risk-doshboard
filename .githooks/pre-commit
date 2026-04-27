@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Pre-commit secrets scan — 拦截内网 URL / 凭证 / 私钥泄露进入 public repo
+#
+# 启用(每次 clone 后跑一次):
+#   git config core.hooksPath .githooks
+# 或:
+#   ./scripts/install-hooks.sh
+#
+# 误报时可临时跳过(请谨慎):
+#   git commit --no-verify
+#
+# 检查范围:本次 commit 即将引入的"+"行(staged diff)。
+# 已被 git 跟踪的旧文件里的字串不会被重复报警(避免历史污染时无法 commit)。
+
+set -euo pipefail
+
+# 模式 → 描述。每个 pattern 用 ERE 语法。
+declare -a PATTERNS=(
+    'registry-npm'                                 # 内网 npm registry 特征
+    '[a-z0-9-]+\.okg\.com'                         # OKG 公司任何子域(只匹配 *.okg.com,不命中 .md 里裸 OKG)
+    'okg-block\.sg\.larksuite\.com'                # 公司 Lark 链接
+    'okx\.com/[a-z0-9_/-]*token'                   # 内部 token endpoint(谨慎)
+    'AKIA[0-9A-Z]{16}'                             # AWS Access Key ID
+    'aws_secret_access_key\s*=\s*[A-Za-z0-9/+=]{40}'  # AWS Secret
+    '-----BEGIN (RSA|DSA|EC|OPENSSH|ENCRYPTED|PGP) PRIVATE KEY-----'
+    '-----BEGIN PRIVATE KEY-----'
+    'gh[ps]_[A-Za-z0-9]{36,}'                      # GitHub Personal/Server token
+    'sk-[A-Za-z0-9]{48,}'                          # OpenAI / Anthropic 标准 secret 前缀
+    'ANTHROPIC_API_KEY\s*=\s*[A-Za-z0-9_-]{20,}'   # Anthropic key 直接赋值
+)
+
+# 允许跳过扫描的路径:
+#   .githooks/pre-commit 本身天然要写 pattern 字面量,自我豁免
+#   其它路径不放行(锁文件本身就是高风险源,即便误报也强制看一眼)
+EXCLUDE_REGEX='^\.githooks/pre-commit$'
+
+# 拿到本次 commit 即将变更的文件列表(A=新增 / C=复制 / M=修改 / R=重命名)
+# 用 while-read 兼容 macOS 自带 bash 3.2(没有 mapfile)
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$CHANGED_FILES" ]; then
+    exit 0
+fi
+
+violations_count=0
+violations_buf=""
+
+while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    # 排除二进制(numstat 对 binary 输出 "- -")
+    if git diff --cached --numstat -- "$f" | awk '{exit ($1=="-" && $2=="-") ? 0 : 1}'; then
+        continue
+    fi
+    [[ "$f" =~ $EXCLUDE_REGEX ]] && continue
+    # 只看 "+" 行(本次新增内容),不扫已有上下文
+    added=$(git diff --cached -U0 --diff-filter=ACMR -- "$f" | grep -E '^\+[^+]' || true)
+    [ -z "$added" ] && continue
+    for pat in "${PATTERNS[@]}"; do
+        # `-- "$pat"` 防止 pattern 以 `-` 开头时被 grep 当成 option(如 PEM header)
+        hits=$(echo "$added" | grep -niE -- "$pat" || true)
+        if [ -n "$hits" ]; then
+            violations_count=$((violations_count + 1))
+            violations_buf+="
+  📁 $f"$'\n'"     模式: ${pat}"$'\n'"     命中(节选):"$'\n'
+            # 限制每个文件 + 每个 pattern 最多打 3 行(防爆屏)
+            sample=$(echo "$hits" | head -n 3 | sed 's/^/       /')
+            violations_buf+="$sample"$'\n'
+        fi
+    done
+done <<< "$CHANGED_FILES"
+
+if [ "$violations_count" -gt 0 ]; then
+    echo ""
+    echo "🚨 pre-commit 拦截 — 本次 commit 含敏感字串($violations_count 处):"
+    echo "$violations_buf"
+    echo ""
+    echo "💡 解决办法:"
+    echo "   1) 把敏感值移到 .env(已 gitignored),或换成公开 registry/URL"
+    echo "   2) 已经 stage 错的文件,先 git restore --staged <file> 再修"
+    echo "   3) 误报可临时绕过(慎用): git commit --no-verify"
+    echo ""
+    exit 1
+fi
+
+exit 0
